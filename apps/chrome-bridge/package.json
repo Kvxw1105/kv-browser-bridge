@@ -1,0 +1,21 @@
+{
+  "name": "@claude-code-browser/chrome-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "local-chrome-bridge": "./dist/bridge.js",
+    "local-chrome-install": "./dist/install.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/bridge.ts"
+  },
+  "dependencies": {
+    "@claude-code-browser/browser-protocol": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0"
+  }
+}

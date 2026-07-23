@@ -1,0 +1,23 @@
+{
+  "name": "@claude-code-browser/codex-mcp-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Standalone stdio MCP server for a locally connected Chrome Bridge.",
+  "type": "module",
+  "bin": {
+    "local-chrome-mcp": "./dist/server.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "check": "tsc --noEmit",
+    "dev": "tsx src/server.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.28.0",
+    "zod": "^4.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0"
+  }
+}

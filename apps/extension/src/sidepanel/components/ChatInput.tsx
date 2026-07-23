@@ -1,0 +1,340 @@
+import React, { useState, useRef, useCallback, useEffect } from 'react';
+
+// Mirrors Claude Code's terminal "thinking" indicator: 6 base glyphs played as
+// a palindrome (forward then reversed) so the animation eases at the ends
+// instead of snapping back to the first frame. 120ms per frame matches CC's
+// `Math.floor(time/120)` frame index.
+const SPINNER_BASE = ['·', '✢', '✳', '✶', '✻', '✽'];
+const SPINNER_FRAMES = [...SPINNER_BASE, ...[...SPINNER_BASE].reverse()];
+const SPINNER_INTERVAL_MS = 120;
+import type { ClientMessage, ElementAnchor } from '@claude-code-browser/shared';
+import { useChatStore, selectActiveIsRunning } from '../stores/chat-store';
+import { MY_TAB_ID } from '../tab';
+import { useElementPicker } from '../hooks/useElementPicker';
+import { SlashCommandMenu } from './SlashCommandMenu';
+import type { SlashCommand } from './SlashCommandMenu';
+import { useSourcePaths } from './SourcesPanel';
+
+interface Props {
+  send: (msg: ClientMessage) => void;
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.readAsDataURL(file);
+  });
+}
+
+export function ChatInput({ send }: Props) {
+  const [images, setImages] = useState<string[]>([]);
+  const [showSlashMenu, setShowSlashMenu] = useState(false);
+  const [slashFilter, setSlashFilter] = useState('');
+  const [slashCommands, setSlashCommands] = useState<SlashCommand[]>([]);
+  const editorRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const { activatePicker } = useElementPicker();
+  const sourcePaths = useSourcePaths();
+
+  const pendingAnchors = useChatStore((s) => s.pendingAnchors);
+  const clearAnchors = useChatStore((s) => s.clearAnchors);
+  const addUserMessage = useChatStore((s) => s.addUserMessage);
+  const activeView = useChatStore((s) => s.activeView);
+  const isAgentRunning = useChatStore(selectActiveIsRunning);
+  const setSessionRunning = useChatStore((s) => s.setSessionRunning);
+  const newChat = useChatStore((s) => s.newChat);
+
+  const [spinnerFrame, setSpinnerFrame] = useState(0);
+  useEffect(() => {
+    if (!isAgentRunning) { setSpinnerFrame(0); return; }
+    const id = setInterval(() => {
+      setSpinnerFrame((i) => (i + 1) % SPINNER_FRAMES.length);
+    }, SPINNER_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [isAgentRunning]);
+
+  const placeholder = 'Ask about this page...';
+
+  // Load slash commands from host
+  useEffect(() => {
+    send({ type: 'commands:list' } as ClientMessage);
+    const handler = (e: Event) => setSlashCommands((e as CustomEvent).detail);
+    window.addEventListener('ccb:commands', handler);
+    return () => window.removeEventListener('ccb:commands', handler);
+  }, [send]);
+
+  // Insert chip at cursor when new anchor arrives
+  const lastAnchorCountRef = useRef(0);
+  useEffect(() => {
+    if (pendingAnchors.length > lastAnchorCountRef.current) {
+      insertChipAtCursor(pendingAnchors[pendingAnchors.length - 1]);
+      // Ensure editor gets focus after element selection (side panel may have lost focus)
+      setTimeout(() => editorRef.current?.focus(), 50);
+    }
+    lastAnchorCountRef.current = pendingAnchors.length;
+  }, [pendingAnchors]);
+
+  function insertChipAtCursor(anchor: ElementAnchor) {
+    const editor = editorRef.current;
+    if (!editor) return;
+    editor.focus();
+    const sel = window.getSelection();
+
+    const chip = document.createElement('span');
+    chip.contentEditable = 'false';
+    chip.className = 'inline-chip';
+    chip.dataset.anchorIndex = String(pendingAnchors.length - 1);
+    chip.title = anchor.domPath;
+    chip.innerHTML = `<span class="inline-chip__icon">\u29BE</span><span class="inline-chip__label">&lt;${anchor.tagName}&gt;</span>`;
+
+    if (sel && sel.rangeCount > 0) {
+      const range = sel.getRangeAt(0);
+      if (editor.contains(range.startContainer)) {
+        range.deleteContents();
+        range.insertNode(chip);
+        range.setStartAfter(chip);
+        range.setEndAfter(chip);
+        sel.removeAllRanges();
+        sel.addRange(range);
+      } else {
+        editor.appendChild(chip);
+      }
+    } else {
+      editor.appendChild(chip);
+    }
+
+    const space = document.createTextNode('\u00A0');
+    chip.after(space);
+    if (sel) {
+      const r = document.createRange();
+      r.setStartAfter(space);
+      r.setEndAfter(space);
+      sel.removeAllRanges();
+      sel.addRange(r);
+    }
+  }
+
+  function getEditorText(): string {
+    const editor = editorRef.current;
+    if (!editor) return '';
+    let text = '';
+    for (const node of Array.from(editor.childNodes)) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        text += node.textContent ?? '';
+      } else if (node instanceof HTMLElement && node.classList.contains('inline-chip')) {
+        const idx = node.dataset.anchorIndex;
+        const anchor = idx !== undefined ? pendingAnchors[Number(idx)] : null;
+        text += anchor ? `<${anchor.tagName}>` : node.textContent ?? '';
+      } else {
+        text += node.textContent ?? '';
+      }
+    }
+    return text.replace(/\u00A0/g, ' ').trim();
+  }
+
+  const handleSend = useCallback(() => {
+    const message = getEditorText();
+    if (!message && pendingAnchors.length === 0 && images.length === 0) return;
+
+    const anchors = pendingAnchors.length > 0 ? [...pendingAnchors] : undefined;
+    const imgs = images.length > 0 ? [...images] : undefined;
+
+    // Resolve which bucket the message + running flag belong to. For empty/pending,
+    // we send no sessionId and let the host create one; clientRequestId correlates
+    // events back to the pending bucket until session:created arrives.
+    let sessionIdForSend: string | undefined;
+    let clientRequestId: string | undefined;
+    let runningKey: string;
+    if (activeView.kind === 'session') {
+      sessionIdForSend = activeView.sessionId;
+      runningKey = activeView.sessionId;
+    } else if (activeView.kind === 'pending') {
+      clientRequestId = activeView.clientRequestId;
+      runningKey = activeView.clientRequestId;
+    } else {
+      clientRequestId = newChat();
+      runningKey = clientRequestId;
+    }
+
+    addUserMessage(message, anchors, imgs);
+    const tid = MY_TAB_ID;
+    const sendMsg = (url: string) => {
+      // origin (host:port) is the per-website key; projectDir (sources[0]) is the
+      // project folder → the session's cwd. The host resolves a per-origin default
+      // folder when none is configured.
+      let origin = '';
+      try { origin = new URL(url).host; } catch { /* not a parseable URL */ }
+      send({
+        type: 'chat:send',
+        sessionId: sessionIdForSend,
+        clientRequestId,
+        message,
+        anchors,
+        images: imgs,
+        url,
+        origin: origin || undefined,
+        projectDir: sourcePaths[0],
+        sources: sourcePaths.length > 0 ? sourcePaths : undefined,
+      });
+    };
+    if (tid) {
+      chrome.tabs.get(tid, (tab) => sendMsg(chrome.runtime.lastError ? '' : tab?.url ?? ''));
+    } else {
+      sendMsg('');
+    }
+    setSessionRunning(runningKey, true);
+
+    clearAnchors();
+    setImages([]);
+    lastAnchorCountRef.current = 0;
+    if (editorRef.current) editorRef.current.innerHTML = '';
+    setShowSlashMenu(false);
+  }, [pendingAnchors, images, addUserMessage, send, activeView, sourcePaths, clearAnchors, setSessionRunning, newChat]);
+
+  const handleStop = useCallback(() => {
+    // Send interrupt for active session. Empty string falls back to the host's
+    // pending-session interrupt path for new chats whose sessionId isn't resolved yet.
+    const sid = activeView.kind === 'session' ? activeView.sessionId : '';
+    send({ type: 'agent:interrupt', sessionId: sid });
+    // Immediately mark the active bucket idle — host will confirm with chat:error
+    if (activeView.kind === 'session') setSessionRunning(activeView.sessionId, false);
+    else if (activeView.kind === 'pending') setSessionRunning(activeView.clientRequestId, false);
+  }, [activeView, send, setSessionRunning]);
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (showSlashMenu) return;
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
+  };
+
+  const handleInput = () => {
+    const text = editorRef.current?.textContent ?? '';
+    if (text.startsWith('/')) {
+      setSlashFilter(text);
+      setShowSlashMenu(true);
+    } else {
+      setShowSlashMenu(false);
+    }
+  };
+
+  const handleSlashSelect = (command: string) => {
+    if (editorRef.current) {
+      editorRef.current.textContent = command;
+      const sel = window.getSelection();
+      if (sel) {
+        const r = document.createRange();
+        r.selectNodeContents(editorRef.current);
+        r.collapse(false);
+        sel.removeAllRanges();
+        sel.addRange(r);
+      }
+    }
+    setShowSlashMenu(false);
+    editorRef.current?.focus();
+  };
+
+  const handlePaste = async (e: React.ClipboardEvent) => {
+    const items = Array.from(e.clipboardData.items);
+    const imageItems = items.filter((item) => item.type.startsWith('image/'));
+    if (imageItems.length > 0) {
+      e.preventDefault();
+      const newImages: string[] = [];
+      for (const item of imageItems) {
+        const file = item.getAsFile();
+        if (file) newImages.push(await readFileAsDataUrl(file));
+      }
+      setImages((prev) => [...prev, ...newImages]);
+      return;
+    }
+    e.preventDefault();
+    const text = e.clipboardData.getData('text/plain');
+    if (text) document.execCommand('insertText', false, text);
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    const files = Array.from(e.dataTransfer.files).filter((f) => f.type.startsWith('image/'));
+    const newImages: string[] = [];
+    for (const file of files) newImages.push(await readFileAsDataUrl(file));
+    setImages((prev) => [...prev, ...newImages]);
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []).filter((f) => f.type.startsWith('image/'));
+    const newImages: string[] = [];
+    for (const file of files) newImages.push(await readFileAsDataUrl(file));
+    setImages((prev) => [...prev, ...newImages]);
+    e.target.value = '';
+  };
+
+  return (
+    <div className="chat-input" onDrop={handleDrop} onDragOver={(e) => e.preventDefault()}>
+      {isAgentRunning && (
+        <div className="chat-input__spinner" aria-label="Processing">
+          {SPINNER_FRAMES[spinnerFrame]}
+        </div>
+      )}
+      {showSlashMenu && (
+        <SlashCommandMenu
+          commands={slashCommands}
+          filter={slashFilter}
+          onSelect={handleSlashSelect}
+          onClose={() => setShowSlashMenu(false)}
+        />
+      )}
+
+      {images.length > 0 && (
+        <div className="chat-input__images">
+          {images.map((src, i) => (
+            <div key={i} className="chat-input__image-preview">
+              <img src={src} alt="Attached" />
+              <button className="chat-input__image-remove" onClick={() => setImages((prev) => prev.filter((_, j) => j !== i))}>x</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div
+        ref={editorRef}
+        className="chat-input__editor"
+        contentEditable
+        onKeyDown={handleKeyDown}
+        onInput={handleInput}
+        onPaste={handlePaste}
+        data-placeholder={placeholder}
+        role="textbox"
+        suppressContentEditableWarning
+      />
+
+      <div className="chat-input__toolbar">
+        <div className="chat-input__toolbar-left">
+          <button className="chat-input__tool-btn chat-input__tool-btn--picker" onClick={activatePicker} title="Pick element">
+            {'\u2316'}
+          </button>
+          <button className="chat-input__tool-btn" onClick={() => fileInputRef.current?.click()} title="Attach file">
+            @
+          </button>
+          <button className="chat-input__tool-btn chat-input__tool-btn--slash" onClick={() => { setShowSlashMenu(!showSlashMenu); setSlashFilter('/'); }} title="Slash commands">
+            /
+          </button>
+        </div>
+
+        <div className="chat-input__toolbar-right">
+          {isAgentRunning && (
+            <button className="chat-input__stop-btn" onClick={handleStop} title="Stop">
+              {'\u25A0'}
+            </button>
+          )}
+          <button className="chat-input__send-btn" onClick={handleSend} title="Send">
+            {'\u2191'}
+          </button>
+        </div>
+      </div>
+
+      <input ref={fileInputRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={handleFileUpload} />
+    </div>
+  );
+}
