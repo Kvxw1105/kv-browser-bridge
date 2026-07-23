@@ -119,6 +119,20 @@ function sendDebuggerCommand<T = unknown>(tabId: number, method: string, params?
   });
 }
 
+/** A detached debugger may be reattached once for observational CDP work.
+ * Input/CDP writes deliberately call ensure/send directly and are never replayed. */
+async function withSafeDebuggerRead<T>(tabId: number, work: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      await ensureDebuggerAttached(tabId);
+      return await work();
+    } catch (error) {
+      if (!(error instanceof ToolError) || error.code !== 'DEBUGGER_DETACHED' || attempt === 1) throw error;
+    }
+  }
+  throw new ToolError('DEBUGGER_DETACHED', 'Debugger detached while reading page state', true, { tabId });
+}
+
 chrome.debugger.onDetach.addListener((source, reason) => {
   if (source.tabId != null) debuggerTabs.delete(source.tabId);
 });
@@ -483,8 +497,7 @@ async function listExtensions(params: Record<string, unknown>): Promise<unknown>
 async function snapshot(tabId: number, params: Record<string, unknown>): Promise<unknown> {
   const tab = await chrome.tabs.get(tabId);
   try {
-    await ensureDebuggerAttached(tabId);
-    const tree = await sendDebuggerCommand<{ nodes?: Array<{ nodeId?: string; role?: { value?: string }; name?: { value?: string }; childIds?: string[] }> }>(tabId, 'Accessibility.getFullAXTree');
+    const tree = await withSafeDebuggerRead(tabId, () => sendDebuggerCommand<{ nodes?: Array<{ nodeId?: string; role?: { value?: string }; name?: { value?: string }; childIds?: string[] }> }>(tabId, 'Accessibility.getFullAXTree'));
     if (tree.nodes?.length) {
       const byId = new Map(tree.nodes.filter((node): node is Required<Pick<typeof node, 'nodeId'>> & typeof node => Boolean(node.nodeId)).map((node) => [node.nodeId, node]));
       const lines: string[] = [];
@@ -525,12 +538,11 @@ async function snapshot(tabId: number, params: Record<string, unknown>): Promise
 
 async function screenshot(tabId: number): Promise<unknown> {
   try {
-    await ensureDebuggerAttached(tabId);
-    const captured = await withTimeout(
+    const captured = await withSafeDebuggerRead(tabId, () => withTimeout(
       sendDebuggerCommand<{ data: string }>(tabId, 'Page.captureScreenshot', { format: 'png' }),
       10_000,
       'Screenshot CDP request timed out',
-    );
+    ));
     return { tabId, mimeType: 'image/png', captureMethod: 'cdp', dataUrl: `data:image/png;base64,${captured.data}` };
   } catch (cdpError) {
     const tab = await chrome.tabs.get(tabId);

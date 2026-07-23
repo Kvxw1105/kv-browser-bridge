@@ -49,6 +49,8 @@ class ChromeBridge {
   private readonly pipeName = makePipeName();
   private readonly discoveryPath = makeDiscoveryPath();
   private readonly pending = new Map<string, PendingRequest>();
+  private readonly idempotencyInFlight = new Map<string, Promise<unknown>>();
+  private readonly idempotencyCompleted = new Map<string, { expiresAt: number; result?: unknown; error?: BridgeError }>();
   private readonly clients = new Set<Socket>();
   private server: Server | undefined;
   private extensionConnected = false;
@@ -243,26 +245,44 @@ class ChromeBridge {
       this.writePipe(socket, this.pipeError(request.id, 'INVALID_REQUEST', `Unsupported browser method: ${request.method}`, false));
       return;
     }
+    const cacheKey = `${authenticatedSessionId}:${request.id}`;
+    const cached = this.idempotencyCompleted.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      this.writePipe(socket, cached.error
+        ? { type: 'response', id: request.id, ok: false, error: cached.error }
+        : { type: 'response', id: request.id, ok: true, result: cached.result });
+      return;
+    }
     try {
-      const result = await this.forwardBrowserRequest(request.id, authenticatedSessionId, browserActionFromTool(request.method), request.params ?? {}, request.timeoutMs, request.deadlineAt, request.operationClass);
+      let execution = this.idempotencyInFlight.get(cacheKey);
+      if (!execution) {
+        execution = this.forwardBrowserRequest(request.id, authenticatedSessionId, browserActionFromTool(request.method), request.params ?? {}, request.timeoutMs, request.deadlineAt);
+        this.idempotencyInFlight.set(cacheKey, execution);
+      }
+      const result = await execution;
+      this.idempotencyCompleted.set(cacheKey, { expiresAt: Date.now() + 30_000, result });
       if (request.method === 'browser_screenshot') this.persistScreenshotArtifact(result, request.params?.artifactPath);
       this.writePipe(socket, { type: 'response', id: request.id, ok: true, result } satisfies PipeResponse);
     } catch (error) {
       const bridgeError = isBridgeError(error)
         ? error
         : this.error('INTERNAL_ERROR', error instanceof Error ? error.message : String(error), false);
+      this.idempotencyCompleted.set(cacheKey, { expiresAt: Date.now() + 30_000, error: bridgeError });
       this.writePipe(socket, { type: 'response', id: request.id, ok: false, error: bridgeError } satisfies PipeResponse);
+    } finally {
+      this.idempotencyInFlight.delete(cacheKey);
     }
   }
 
-  private forwardBrowserRequest(requestId: string, sessionId: string, action: BrowserRequest['action'], params: Record<string, unknown>, requestedTimeout?: number, requestedDeadline?: number, requestedClass?: BrowserRequest['operationClass']): Promise<unknown> {
+  private forwardBrowserRequest(requestId: string, sessionId: string, action: BrowserRequest['action'], params: Record<string, unknown>, requestedTimeout?: number, requestedDeadline?: number): Promise<unknown> {
     if (!this.extensionConnected) {
       return Promise.reject(this.error('BRIDGE_NOT_READY', 'Chrome Extension is not connected to the Bridge', true));
     }
     const timeoutMs = clampTimeout(requestedTimeout);
     const deadlineAt = Math.min(typeof requestedDeadline === 'number' ? requestedDeadline : Infinity, Date.now() + timeoutMs);
     const remainingMs = Math.max(0, deadlineAt - Date.now());
-    const operationClass = requestedClass ?? operationClassFor(action);
+    // The authenticated bridge is the trust boundary for retry semantics.
+    const operationClass = operationClassFor(action);
     const request: BrowserRequest = { type: 'browser:request', requestId, sessionId, action, params, timeoutMs, deadlineAt, operationClass };
     return new Promise<unknown>((resolve, reject) => {
       const timer = setTimeout(() => {

@@ -2,6 +2,7 @@ import { createConnection, type Socket } from 'node:net';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { operationClassForMethod, PerTabWriteQueue, timeoutErrorForMethod } from './reliability.js';
 
 export type BridgeErrorCode =
   | 'BRIDGE_UNAVAILABLE'
@@ -134,6 +135,7 @@ export class BridgeClient {
   private lastError: BridgeStatus['lastError'];
   private bridgeStatus: unknown;
   private sessionId: string | undefined;
+  private readonly writeQueue = new PerTabWriteQueue();
 
   constructor(private readonly options: BridgeClientOptions) {}
 
@@ -155,14 +157,21 @@ export class BridgeClient {
       throw new BridgeError('BRIDGE_UNAVAILABLE', 'Chrome Bridge is not connected.', true);
     }
 
+    const operationClass = operationClassForMethod(method);
+    const tabId = typeof params.tabId === 'number' ? params.tabId : undefined;
+    return this.writeQueue.run(tabId, operationClass, () => this.requestOnce(method, params, timeoutMs, operationClass));
+  }
+
+  private requestOnce(method: string, params: Record<string, unknown>, timeoutMs: number, operationClass: 'read' | 'non_idempotent_write'): Promise<unknown> {
     const id = crypto.randomUUID();
     return new Promise<unknown>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new BridgeError('BRIDGE_TIMEOUT', `${method} exceeded ${timeoutMs}ms.`, true));
+        const timeout = timeoutErrorForMethod(method);
+        reject(new BridgeError(timeout.code, `${method} exceeded ${timeoutMs}ms.`, timeout.retryable, { operationClass }));
       }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer });
-      this.write({ id, method, params, timeoutMs, deadlineAt: Date.now() + timeoutMs, sessionId: this.sessionId });
+      this.write({ id, method, params, timeoutMs, deadlineAt: Date.now() + timeoutMs, sessionId: this.sessionId, operationClass });
     });
   }
 
@@ -269,7 +278,7 @@ export class BridgeClient {
     });
   }
 
-  private write(message: { id: string; method: string; params: Record<string, unknown>; timeoutMs?: number; deadlineAt?: number; sessionId?: string }): void {
+  private write(message: { id: string; method: string; params: Record<string, unknown>; timeoutMs?: number; deadlineAt?: number; sessionId?: string; operationClass?: 'read' | 'non_idempotent_write' }): void {
     if (!this.socket || this.socket.destroyed) {
       const pending = this.pending.get(message.id);
       if (pending) {
