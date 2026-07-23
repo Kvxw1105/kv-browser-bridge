@@ -38,6 +38,7 @@ interface PendingRequest {
   timer: NodeJS.Timeout;
   method: string;
   startedAt: number;
+  operationClass: BrowserRequest['operationClass'];
 }
 
 class ChromeBridge {
@@ -91,7 +92,9 @@ class ChromeBridge {
     const error = this.error('CONNECTION_CLOSED', 'Chrome Bridge stopped', true);
     for (const [requestId, request] of this.pending) {
       clearTimeout(request.timer);
-      request.reject(error);
+      request.reject(request.operationClass === 'non_idempotent_write'
+        ? this.error('UNKNOWN_OUTCOME', 'Native connection closed after a write may have started', false, { action: request.method })
+        : error);
       this.pending.delete(requestId);
     }
     for (const client of this.clients) client.destroy();
@@ -197,6 +200,7 @@ class ChromeBridge {
           return;
         }
         setAuthenticated(true);
+        (socket as Socket & { kvClientId?: string }).kvClientId = clientName ?? 'anonymous';
         this.writePipe(socket, {
           id: rpcHello.id,
           result: { accepted: true, protocolVersion: BRIDGE_PROTOCOL_VERSION, sessionId, bridge: this.status() },
@@ -218,6 +222,7 @@ class ChromeBridge {
         return;
       }
       setAuthenticated(true);
+      (socket as Socket & { kvClientId?: string }).kvClientId = clientName ?? 'anonymous';
       const ack: PipeHelloAck = {
         type: 'hello:ack',
         version: BRIDGE_PROTOCOL_VERSION,
@@ -245,7 +250,14 @@ class ChromeBridge {
       this.writePipe(socket, this.pipeError(request.id, 'INVALID_REQUEST', `Unsupported browser method: ${request.method}`, false));
       return;
     }
-    const cacheKey = `${authenticatedSessionId}:${request.id}`;
+    const clientIdentity = (socket as Socket & { kvClientId?: string }).kvClientId ?? authenticatedSessionId;
+    const cacheKey = `${clientIdentity}:${request.idempotencyKey ?? request.id}`;
+    if (this.idempotencyCompleted.size > 1024) {
+      const now = Date.now();
+      for (const [key, value] of this.idempotencyCompleted) {
+        if (value.expiresAt <= now || this.idempotencyCompleted.size > 1024) this.idempotencyCompleted.delete(key);
+      }
+    }
     const cached = this.idempotencyCompleted.get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) {
       this.writePipe(socket, cached.error
@@ -291,7 +303,7 @@ class ChromeBridge {
         this.recordError(timeout);
         reject(timeout);
       }, remainingMs);
-      this.pending.set(requestId, { resolve, reject, timer, method: `browser_${action}`, startedAt: Date.now() });
+      this.pending.set(requestId, { resolve, reject, timer, method: `browser_${action}`, startedAt: Date.now(), operationClass });
       try {
         this.sendNative(request);
         this.logger.write('info', 'browser.request', { requestId, method: `browser_${action}`, timeoutMs });

@@ -35,6 +35,8 @@ type PendingRequest = {
   resolve: (result: unknown) => void;
   reject: (error: BridgeError) => void;
   timer: NodeJS.Timeout;
+  operationClass: 'read' | 'non_idempotent_write';
+  method: string;
 };
 type BridgeResponse = { id?: string; result?: unknown; error?: unknown };
 type BridgeEvent = { type?: string; event?: string; data?: unknown };
@@ -48,6 +50,8 @@ export type BridgeStatus = {
   lastConnectedAt?: string;
   lastError?: { code: BridgeErrorCode; message: string; at: string };
   bridge?: unknown;
+  ready: boolean;
+  degraded: boolean;
 };
 
 export type BridgeClientOptions = {
@@ -140,6 +144,9 @@ export class BridgeClient {
   constructor(private readonly options: BridgeClientOptions) {}
 
   getStatus(): BridgeStatus {
+    const bridge = this.bridgeStatus as { extensionConnected?: unknown; nativeReady?: unknown; lastExtensionMessageAt?: unknown } | undefined;
+    const socketReady = this.socket !== null && !this.socket.destroyed && this.authenticated;
+    const extensionReady = bridge?.extensionConnected === true && bridge?.nativeReady === true;
     return {
       connected: this.socket !== null && !this.socket.destroyed,
       authenticated: this.authenticated,
@@ -148,6 +155,8 @@ export class BridgeClient {
       lastConnectedAt: this.lastConnectedAt,
       lastError: this.lastError,
       bridge: this.bridgeStatus,
+      ready: socketReady && extensionReady,
+      degraded: socketReady && !extensionReady,
     };
   }
 
@@ -159,10 +168,11 @@ export class BridgeClient {
 
     const operationClass = operationClassForMethod(method);
     const tabId = typeof params.tabId === 'number' ? params.tabId : undefined;
-    return this.writeQueue.run(tabId, operationClass, () => this.requestOnce(method, params, timeoutMs, operationClass));
+    const idempotencyKey = typeof params.idempotencyKey === 'string' ? params.idempotencyKey : crypto.randomUUID();
+    return this.writeQueue.run(tabId, operationClass, () => this.requestOnce(method, params, timeoutMs, operationClass, idempotencyKey));
   }
 
-  private requestOnce(method: string, params: Record<string, unknown>, timeoutMs: number, operationClass: 'read' | 'non_idempotent_write'): Promise<unknown> {
+  private requestOnce(method: string, params: Record<string, unknown>, timeoutMs: number, operationClass: 'read' | 'non_idempotent_write', idempotencyKey: string): Promise<unknown> {
     const id = crypto.randomUUID();
     return new Promise<unknown>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -170,8 +180,8 @@ export class BridgeClient {
         const timeout = timeoutErrorForMethod(method);
         reject(new BridgeError(timeout.code, `${method} exceeded ${timeoutMs}ms.`, timeout.retryable, { operationClass }));
       }, timeoutMs);
-      this.pending.set(id, { resolve, reject, timer });
-      this.write({ id, method, params, timeoutMs, deadlineAt: Date.now() + timeoutMs, sessionId: this.sessionId, operationClass });
+      this.pending.set(id, { resolve, reject, timer, method, operationClass });
+      this.write({ id, method, params, timeoutMs, deadlineAt: Date.now() + timeoutMs, sessionId: this.sessionId, operationClass, idempotencyKey });
     });
   }
 
@@ -273,12 +283,12 @@ export class BridgeClient {
         this.pending.delete(id);
         reject(new BridgeError('BRIDGE_TIMEOUT', `${method} exceeded ${timeoutMs}ms.`, true));
       }, timeoutMs);
-      this.pending.set(id, { resolve, reject, timer });
+      this.pending.set(id, { resolve, reject, timer, method, operationClass: 'read' });
       this.write({ id, method, params, timeoutMs, deadlineAt: Date.now() + timeoutMs });
     });
   }
 
-  private write(message: { id: string; method: string; params: Record<string, unknown>; timeoutMs?: number; deadlineAt?: number; sessionId?: string; operationClass?: 'read' | 'non_idempotent_write' }): void {
+  private write(message: { id: string; method: string; params: Record<string, unknown>; timeoutMs?: number; deadlineAt?: number; sessionId?: string; operationClass?: 'read' | 'non_idempotent_write'; idempotencyKey?: string }): void {
     if (!this.socket || this.socket.destroyed) {
       const pending = this.pending.get(message.id);
       if (pending) {
@@ -348,7 +358,9 @@ export class BridgeClient {
     const error = new BridgeError('BRIDGE_UNAVAILABLE', 'Chrome Bridge connection closed.', true);
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timer);
-      pending.reject(error);
+      pending.reject(pending.operationClass === 'non_idempotent_write'
+        ? new BridgeError('UNKNOWN_OUTCOME', `${pending.method} may have completed before the Chrome Bridge disconnected.`, false)
+        : error);
     }
     this.pending.clear();
     if (wasConnected) this.recordError(error);

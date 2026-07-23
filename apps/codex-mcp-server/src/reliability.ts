@@ -20,11 +20,12 @@ export class PerTabWriteQueue {
     const previous = this.tails.get(tabId) ?? Promise.resolve();
     let release!: () => void;
     const next = new Promise<void>((resolve) => { release = resolve; });
-    this.tails.set(tabId, previous.then(() => next));
+    const tail = previous.then(() => next);
+    this.tails.set(tabId, tail);
     await previous;
     try { return await work(); } finally {
       release();
-      if (this.tails.get(tabId) === next) this.tails.delete(tabId);
+      if (this.tails.get(tabId) === tail) this.tails.delete(tabId);
     }
   }
 }

@@ -45,6 +45,7 @@ export interface BrowserRequest {
   sessionId?: string;
   deadlineAt?: number;
   operationClass?: OperationClass;
+  idempotencyKey?: string;
 }
 
 export interface BrowserResponse {
@@ -120,6 +121,7 @@ export interface PipeRequest {
   sessionId?: string;
   deadlineAt?: number;
   operationClass?: OperationClass;
+  idempotencyKey?: string;
 }
 
 export interface PipeResponse {
