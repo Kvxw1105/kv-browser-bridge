@@ -36,12 +36,12 @@ export function LocalBridgePanel() {
   return (
     <main className="local-bridge-panel">
       <header className="local-bridge-panel__header">
-        <h1>Local Chrome</h1>
+        <h1>Kv Browser Bridge</h1>
         <span className={`local-bridge-panel__state local-bridge-panel__state--${state}`}>{label}</span>
       </header>
       <dl className="local-bridge-panel__details">
         <div><dt>Bridge</dt><dd>Native Messaging</dd></div>
-        <div><dt>MCP</dt><dd>kv-browser-bridge</dd></div>
+        <div><dt>MCP server</dt><dd>kv-browser-bridge</dd></div>
         <div><dt>Target</dt><dd>{target || (MY_TAB_ID == null ? 'No target tab' : `Tab ${MY_TAB_ID}`)}</dd></div>
       </dl>
       <section className="local-bridge-panel__permissions" aria-label="Optional browser access">

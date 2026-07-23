@@ -1,14 +1,14 @@
-# Local Chrome Codex MCP Server
+# Kv Browser Bridge MCP Server
 
-This is a standalone stdio MCP server. It never starts Chrome, Playwright, or a browser profile. It connects to a separately running Chrome Bridge through a local Windows named pipe.
+This is the standalone stdio MCP server for Kv Browser Bridge. It never starts Chrome, Playwright, or a browser profile. It connects to the separately running Kv host through a local Windows Named Pipe.
 
-Register a built server with Codex:
+Register a built server with Codex (configuration example):
 
 ```powershell
 codex mcp add kv-browser-bridge -- node C:\path\to\kv-browser-bridge\apps\codex-mcp-server\dist\server.js
 ```
 
-By default the server reads `%LOCALAPPDATA%\KvBrowserBridge\bridge.json` (falling back to the previous `CodexLocalChrome` location for existing clients):
+By default the server reads `%LOCALAPPDATA%\KvBrowserBridge\bridge.json`:
 
 ```json
 {
@@ -19,9 +19,9 @@ By default the server reads `%LOCALAPPDATA%\KvBrowserBridge\bridge.json` (fallin
 
 Environment variables are useful for development or an alternate location:
 
-- `LOCAL_CHROME_BRIDGE_CONFIG`: absolute path to the bridge config JSON.
-- `LOCAL_CHROME_PIPE`: named pipe endpoint; overrides `pipeName`.
-- `LOCAL_CHROME_TOKEN`: bridge token; overrides `token`.
+- `KV_BROWSER_BRIDGE_CONFIG`: absolute path to the bridge config JSON.
+- `KV_BROWSER_BRIDGE_PIPE`: named pipe endpoint; overrides `pipeName`.
+- `KV_BROWSER_BRIDGE_TOKEN`: bridge token; overrides `token`.
 - `LOCAL_CHROME_REQUEST_TIMEOUT_MS`: default per-tool timeout (30 seconds by default).
 
 The bridge protocol is newline-delimited JSON-RPC-like messages:

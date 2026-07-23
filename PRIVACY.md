@@ -1,77 +1,29 @@
-# Privacy Policy — Claude Code Browser
+# Kv Browser Bridge Privacy
 
-**Last updated:** March 30, 2026
+**Last updated:** July 23, 2026
 
-## Overview
+Kv Browser Bridge is a local Windows integration between a Chrome extension, a Native Messaging host, and an MCP server. It does not include a Kv cloud service or claim to transmit data to one.
 
-Claude Code Browser is an open-source Chrome extension that connects your browser to Claude Code for visual web debugging. This privacy policy explains what data the extension accesses and how it is handled.
+## What the extension can access
 
-## Data Collection
+- `activeTab`, `tabs`, `scripting`, and host permissions let the extension work with the tab selected for browser automation, including page DOM and element details required by requested operations.
+- `debugger` lets the extension use Chrome DevTools Protocol functions for navigation, snapshots, screenshots, page interaction, and guarded evaluation. Chrome displays its debugging notice when this is active.
+- `storage` keeps extension-local settings such as UI state.
+- `nativeMessaging` connects the extension to the Kv host running on the same Windows user account.
+- `bookmarks`, `downloads`, and `management` are optional permissions requested through the extension UI. They respectively support bookmark access, download-status access (without local paths or source URLs), and read-only extension inventory. They are not granted unless the user approves them.
 
-**Claude Code Browser does not collect, store, or transmit any personal data to external servers.**
+## Local data flow
 
-## What the Extension Accesses
+Chrome starts the Kv host through Native Messaging. The host and the separate stdio MCP server communicate through a Windows Named Pipe. The host publishes local discovery metadata and a random bearer token in `%LOCALAPPDATA%\KvBrowserBridge\bridge.json`; the token is needed to connect to that pipe. This design is intended for the current Windows user, not as a network-accessible service.
 
-The extension requires certain browser permissions to function:
+The host writes JSONL diagnostic logs under `%LOCALAPPDATA%\KvBrowserBridge\logs`. Screenshots are written only when an MCP request supplies an artifact path. The contents, retention, and access controls of requested screenshot destinations are chosen by the current user and their client workflow. Local logs and discovery files remain until removed by the user or the operating system's normal profile management; they are not automatically uploaded by Kv Browser Bridge.
 
-### Page Content (activeTab, scripting)
-- The extension reads DOM structure and element properties when you use the element picker or DOM tree panel
-- This data stays local in your browser and is only sent to Claude Code running on **your own machine** via Chrome's Native Messaging API
+## What Kv Browser Bridge does not read or export
 
-### Browser Debugging (debugger)
-- When Claude Code needs to interact with a page (take screenshots, click elements, evaluate JavaScript), the extension uses Chrome's debugger API
-- Chrome displays a yellow banner ("extension is debugging this browser") when this is active
-- No debugging data leaves your machine
+Kv Browser Bridge does not read or export Chrome cookies, Chrome profile data, or browser storage. It does not copy a Chrome profile, launch a second browser, or use Playwright. It does not include analytics, advertising, or a cloud collection service.
 
-### Storage (storage)
-- Source directory paths are stored locally in `chrome.storage.local`, keyed by domain
-- Collapsed/expanded panel states are stored locally
-- No data is synced to any cloud service
+Browser automation and screenshots can necessarily expose content in the tabs a user directs an MCP client to control. Use only trusted MCP clients and prompts, and do not request screenshots or actions on sensitive pages unless that is your intent.
 
-### Native Messaging (nativeMessaging)
-- The extension communicates with a local Node.js process on your machine via Chrome's Native Messaging API
-- This process runs the Claude Agent SDK which connects to the Anthropic API using **your own API key or OAuth session**
-- The extension itself never contacts Anthropic's servers directly
+## Source and attribution
 
-## Data Flow
-
-```
-Your Browser (extension) → Local Node.js Host → Claude Code CLI → Anthropic API
-```
-
-All communication between the extension and Claude Code happens **locally on your machine** via Chrome's Native Messaging protocol (stdin/stdout). The only external network requests are made by Claude Code CLI to the Anthropic API, using your own authentication.
-
-## What We Do NOT Do
-
-- We do not collect analytics or telemetry
-- We do not track browsing history
-- We do not store or transmit passwords, cookies, or session tokens
-- We do not inject ads or affiliate links
-- We do not sell or share any data
-- We do not use third-party tracking scripts
-
-## Third-Party Services
-
-- **Anthropic API** — Claude Code connects to Anthropic's API using your credentials. See [Anthropic's Privacy Policy](https://www.anthropic.com/privacy) for how they handle API requests.
-
-## Open Source
-
-This extension is fully open source under the MIT license. Copyright (c) 2026 Fineguide.AI (Corneliu Maftuleac).
-
-- Source code: https://github.com/cmaftuleac/claude-code-browser
-- Chrome Web Store listing: https://chromewebstore.google.com/detail/claude-code-browser/mnibceaaapcppokpnnljohdlmojjgbkf
-
-## Contact
-
-For questions about this privacy policy, open an issue on GitHub or contact:
-
-**Fineguide.AI** — https://fineguide.ai
-**Corneliu Maftuleac** — https://x.com/cmaftuleac
-
-## Chrome Web Store API Use Policy Compliance
-
-Claude Code Browser's use and transfer to any other app of information received from Chrome APIs adheres to the [Chrome Web Store API Use Policy](https://developer.chrome.com/docs/webstore/program-policies/), including the Limited Use requirements.
-
-## Changes
-
-Any changes to this privacy policy will be reflected in this document and the "Last updated" date above.
+Kv Browser Bridge is an MIT derivative of Claude Code Browser. Upstream attribution is preserved in [NOTICE](NOTICE); the root [LICENSE](LICENSE) remains unchanged.

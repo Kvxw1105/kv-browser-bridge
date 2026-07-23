@@ -1,41 +1,38 @@
-# Codex Local Chrome
+# Kv Browser Bridge for Codex
 
-This integration controls the Chrome instance already running under the current Windows user. It does not start Playwright, launch a second Chrome, copy a Chrome profile, or read and export browser storage.
+Kv Browser Bridge connects Codex to the Chrome already running for the current Windows user. The active path is the Kv extension, Kv host, and Kv MCP server; it neither starts Playwright nor launches another Chrome profile.
 
-## Build and install
-
-Build the extension, Chrome Bridge, and independent Codex MCP server:
+## Build and register
 
 ```powershell
 npm run build:local-chrome
 ```
 
-Load `apps/extension/dist` as an unpacked Chrome extension, then note its extension ID from `chrome://extensions`. Register the Native Messaging Bridge with that ID:
+Load `apps/extension/dist` as an unpacked extension in `chrome://extensions`, then copy its ID. Register the Kv host for that exact extension ID:
 
 ```powershell
 node apps/chrome-bridge/dist/install.js install <extension-id>
 ```
 
-Register the separate stdio MCP server with Codex:
+An extension ID is required because the Native Messaging manifest allows only the registered extension origin. Reload the extension or restart Chrome after registration.
+
+Register the built Kv MCP server with Codex:
 
 ```powershell
-codex mcp add local-chrome -- node <absolute-path-to>\apps\codex-mcp-server\dist\server.js
+codex mcp add kv-browser-bridge -- node <absolute-path-to>\apps\codex-mcp-server\dist\server.js
 ```
 
-The MCP process uses only its own stdin/stdout. The Chrome Bridge owns Native Messaging stdin/stdout and communicates with MCP over a per-process Windows Named Pipe. Discovery metadata and a short-lived random authentication token are written to `%LOCALAPPDATA%\CodexLocalChrome\bridge.json`; logs are JSONL files in `%LOCALAPPDATA%\CodexLocalChrome\logs`.
+The MCP server uses stdio only. It discovers the Kv host via `%LOCALAPPDATA%\KvBrowserBridge\bridge.json` and connects using a per-process Windows Named Pipe plus a random bearer token. JSONL logs are stored under `%LOCALAPPDATA%\KvBrowserBridge\logs`.
 
-## First-phase safety
+## Safety notes
 
-- Open the extension once in the Chrome tab you want to control, or call `browser_switch_tab` after `browser_get_tabs`.
-- `browser_new_tab` creates a tab inside an existing Chrome window; it never starts a second Chrome process or profile.
-- `browser_scroll`, `browser_find`, and `browser_close_tab` support dynamic list pages. Closing requires both an exact tab ID and `confirm: true`; pinned and last-window tabs are blocked by default.
-- The extension requests bookmark, download-status, and extension-inventory access only as optional permissions from its Local Chrome page. Download output excludes local paths and source URLs. Extension inventory is read-only because Chrome requires a real user gesture for enable/disable changes.
-- `browser_set_files` validates absolute paths and uses CDP `DOM.setFileInputFiles`; it never uses Windows file-picker coordinates.
-- `browser_click` blocks controls whose accessible text looks like final Publish/Post/Submit controls. Do not bypass this policy with `browser_evaluate`.
-- A comment composer can send only when `browser_click` is called with `allowCommentSend: true`; the target must have exact text `发送` and share a near ancestor with a contenteditable comment input. This exception never applies to a final work-publish control.
-- `browser_evaluate` is sent with CDP `throwOnSideEffect: true`; operations Chrome considers effectful are rejected.
-- Request screenshots with an `artifactPath` to persist audit evidence, for example `D:\artifacts\run-1\before-publish.png`.
+- Select a target tab in the extension, or use `browser_get_tabs` and `browser_switch_tab`.
+- `browser_new_tab` opens a tab in an existing Chrome window; it never creates a separate Chrome process or profile.
+- Optional bookmark, download-status, and extension-inventory permissions are requested from the extension UI. Extension inventory is read-only.
+- `browser_set_files` requires absolute paths and uses CDP file-input support.
+- `browser_click` blocks likely final Publish/Post/Submit controls. Do not use `browser_evaluate` to circumvent that safeguard.
+- Supply an `artifactPath` with a screenshot request only when you intend to retain the resulting local image.
 
 ## Legacy code
 
-`apps/host`, `packages/agent-core`, and `skills/browse` remain in the repository for the old Claude Code Browser product. They are not started or referenced by the Codex local-Chrome path. New browser capabilities live in `apps/extension/src/background/browser-executor.ts`, `apps/chrome-bridge`, and `apps/codex-mcp-server`.
+`apps/host`, `apps/server`, `apps/desktop`, `packages/agent-core`, and `skills` remain legacy code and are not part of the Kv Browser Bridge path. New Kv browser capabilities live in `apps/extension/src/background/browser-executor.ts`, `apps/chrome-bridge`, and `apps/codex-mcp-server`.

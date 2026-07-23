@@ -1,0 +1,12 @@
+Kv Browser Bridge
+Copyright (c) 2026 Kv Browser Bridge contributors.
+
+This project is an MIT-licensed derivative of Claude Code Browser, originally
+developed by Fineguide.AI / Corneliu Maftuleac.
+
+Source project: Claude Code Browser
+Source URL: https://github.com/cmaftuleac/claude-code-browser
+
+Current baseline lineage: Kv Browser Bridge is based on the Claude Code Browser
+source baseline and retains portions of that code under the original MIT terms.
+The root LICENSE is the original license text and is intentionally unchanged.

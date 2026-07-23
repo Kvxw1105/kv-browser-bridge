@@ -28,6 +28,7 @@
     "build:local-chrome": "npm run build:bridge && npm run build:codex-mcp && npm run build:extension",
     "check:local-chrome": "npm run build -w packages/shared && npm run build:local-chrome && npx tsc -p apps/chrome-bridge/tsconfig.json --noEmit && npx tsc -p apps/codex-mcp-server/tsconfig.json --noEmit && npx tsc -p apps/extension/tsconfig.json --noEmit",
     "test:local-chrome": "npm run build -w packages/browser-protocol -w apps/chrome-bridge -w apps/codex-mcp-server && node --test apps/chrome-bridge/test/*.test.mjs apps/codex-mcp-server/test/*.test.mjs",
+    "test:branding": "node --test test/branding.test.mjs",
     "dev:host": "npm run dev -w apps/host",
     "dev:desktop": "npm run dev -w apps/desktop",
     "build:desktop": "npm run build -w apps/desktop",

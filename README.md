@@ -1,269 +1,96 @@
-# Claude Code Browser
+# Kv Browser Bridge
 
-> Codex integration is available as a separate local path. See [docs/codex-local-chrome.md](docs/codex-local-chrome.md). It uses the current Chrome through the extension and never launches Playwright or a second browser.
+Kv Browser Bridge gives an MCP client controlled access to the Chrome already running for the current Windows user. It uses a Chrome extension, a local Native Messaging bridge, and a standalone stdio MCP server. It does not launch Playwright, start a second Chrome process, copy a profile, or act as a cloud browser service.
 
-A Chrome extension that lets you **point at page elements** and have Claude Code fix them — no screenshots, no copy-pasting selectors.
+Kv Browser Bridge is an MIT derivative of Claude Code Browser. See [NOTICE](NOTICE) for upstream attribution; the original root [LICENSE](LICENSE) is unchanged.
 
-**[➜ Install from the Chrome Web Store](https://chromewebstore.google.com/detail/claude-code-browser/mnibceaaapcppokpnnljohdlmojjgbkf)**
+## Supported environment
 
-## Screenshots
+- Windows (the installer registers a Chrome Native Messaging host under HKCU)
+- Google Chrome with unpacked-extension developer mode available
+- Node.js and npm
+- Codex or another MCP client that can start a stdio server
 
-<p align="center">
-  <img src="screenshots/screenshot-1.png" width="18%" />
-  <img src="screenshots/screenshot-2.png" width="18%" />
-  <img src="screenshots/screenshot-3.png" width="18%" />
-  <img src="screenshots/screenshot-4.png" width="18%" />
-  <img src="screenshots/screenshot-5.png" width="18%" />
-</p>
-
-## How it works
-
-1. In VS Code, type `/browse localhost:3000` (or any URL)
-2. Chrome opens the page, workspace sources are registered automatically
-3. Open the Claude Code Browser side panel
-4. Click on elements to select them
-5. Ask Claude to fix, modify, or inspect them
-6. Claude sees the element, reads your source code, and makes the fix
-
-## Features
-
-### Element Picker
-- Click any element on the page to select it
-- Captures CSS selector, XPath, full DOM path, and HTML snippet
-- Smart target resolution — clicking an SVG icon selects the parent button
-- Tooltip shows element description while hovering
-- Toggle with the ⌖ button, cancel with Escape or second click
-- Auto-injects on pages loaded before the extension
-
-### Inline Element Chips
-- Selected elements appear as inline `⦾ <button>` chips in the chat editor
-- Mix text and element references naturally: "fix the color of ⦾ `<p>` and align ⦾ `<svg>`"
-- Rich context sent to Claude: DOM path, position, XPath, CSS selector, HTML snippet
-
-### DOM Tree Panel
-- Collapsible tree view of the page's DOM structure
-- Click nodes to add them as chips in the chat
-- Hovering highlights elements on the page (amber overlay)
-- Element picker selection highlights the node in the tree
-- Auto-refreshes on tab switch and page navigation
-- Remembers expanded/collapsed state
-
-### Sources Panel
-- Configure project directories per domain (e.g., `localhost` → your project paths)
-- Passed to Claude Code as `additionalDirectories` — Claude can read/edit your source files
-- Persisted in `chrome.storage.local` keyed by domain
-- **Auto-populated from VS Code** — `/browse` skill registers all workspace directories automatically
-- Add/remove paths manually
-
-### Message Queue
-- Send messages while the agent is running — they queue up
-- Queue items shown as compact rows above the chat input
-- Drag-and-drop to reorder queued messages
-- Edit button fills the chat input with the queued message for editing
-- Remove button to cancel queued messages
-- Auto-sends next queued message when agent finishes
-- Queue preserved on interrupts (not auto-sent after stop)
-
-### Chat Input (Claude Code style)
-- ContentEditable editor with inline element chips
-- **⌖** — Element picker (toggle on/off)
-- **@** — Attach images (paste, drag-drop, or file picker)
-- **//** — Slash commands (dynamically loaded from Claude Code skills)
-- **■** Stop button — visible while agent runs, with 3s fallback
-- **↑** Send button — always enabled, queues if agent is busy
-- Dynamic placeholder: "Ask about this page..." / "Queue a message..."
-
-### Streaming Chat
-- Real-time streaming responses from Claude Code
-- Full Markdown + GFM rendering (tables, code blocks, lists, blockquotes)
-- Links open in new tabs
-- "interrupted" shown as subtle italic text (not red error)
-
-### Session Management
-- Browse and resume previous Claude Code sessions
-- Session titles from Claude Code (custom titles, summaries, first prompt)
-- New Chat button in the top bar
-
-### Browser Tools (via chrome.debugger)
-- Claude can interact with your browser directly — no separate CDP browser needed
-- `browser_navigate` — Navigate to a URL
-- `browser_snapshot` — Get accessibility tree or DOM structure
-- `browser_screenshot` — Capture PNG screenshot
-- `browser_click` — Click elements by CSS selector or XPath
-- `browser_evaluate` — Execute JavaScript on the page
-
-### VS Code Integration
-- `/browse <url>` skill — opens URL in Chrome and registers workspace sources
-- Detects all workspace directories (pwd + `--add-dir` paths)
-- Sources auto-sync to the extension within seconds
-- Works with Claude Code CLI too
-
-### Setup & Onboarding
-- Auto-detection screen when native host isn't installed
-- One command to install everything: `npx claude-code-browser install`
-- Cross-platform (macOS, Linux, Windows)
-- Auto-installs Claude Code CLI if missing
-- Registers native messaging host + `/browse` skill
-- Content script auto-injects on pre-loaded pages
+The extension controls only the Chrome instance running as the same Windows user. The bridge and MCP server communicate over a per-process Windows Named Pipe.
 
 ## Architecture
 
-```
-Chrome Extension (React)  ←Native Messaging→  Node.js Host  ←Agent SDK→  Claude Code
-     ↕ chrome.debugger                              ↕
-  Browser Tools                              Custom Tool Definitions
-  (navigate, snapshot,                       (browser_navigate,
-   screenshot, click,                         browser_snapshot,
-   evaluate)                                  browser_screenshot, etc.)
+```text
+Chrome extension --Native Messaging--> Kv host --Named Pipe + bearer token--> Kv MCP server --stdio--> MCP client
+       |                                  |
+       +-- chrome.debugger on current Chrome +-- local discovery/config and JSONL logs
 ```
 
-- **Chrome Extension** — React + Zustand + Vite, Manifest V3 with Side Panel API
-- **Native Messaging Host** — Node.js, launched automatically by Chrome
-- **Claude Agent SDK** — Programmatic control, streaming, sessions, custom tools
-- **No Playwright/MCP** — Uses `chrome.debugger` API directly
+The extension's `chrome.debugger` access enables browser operations such as navigation, snapshots, screenshots, and element interaction. The Kv host writes local discovery metadata containing a random bearer token; only a client with that token can connect to its Named Pipe.
 
-## Installation
+## Install from source
 
-### Prerequisites
-
-- [Node.js](https://nodejs.org) 18+
-- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) — `npm install -g @anthropic-ai/claude-code`
-- Google Chrome
-
----
-
-### Option A: One-command install (Recommended)
-
-```bash
-npx claude-code-browser install
-```
-
-This single command:
-1. Checks Node.js and Claude Code CLI (installs if missing)
-2. Registers the native messaging host for Chrome
-3. Installs the `/browse` skill for Claude Code
-4. Opens the Chrome Web Store page for the extension (one-click install)
-
-After installing, **restart Chrome** (Cmd+Q then reopen).
-
----
-
-### Option B: Build from source
-
-```bash
-# 1. Clone and install
-git clone https://github.com/cmaftuleac/claude-code-browser.git
-cd claude-code-browser
+```powershell
 npm install
-
-# 2. Build the extension
-npm run build:extension
-
-# 3. Load extension in Chrome
-#    → Open chrome://extensions
-#    → Enable "Developer mode"
-#    → Click "Load unpacked"
-#    → Select: apps/extension/dist/
-#    → Note the extension ID shown
-
-# 4. Build and install the native host
-npm run build:host
-node apps/host/dist/install.js install <your-extension-id>
-
-# 5. Restart Chrome (Cmd+Q then reopen)
+npm run build:local-chrome
 ```
 
----
+Then load `apps/extension/dist` from `chrome://extensions` using **Load unpacked**. Copy its extension ID and register the host with that exact ID:
 
-### Verify Installation
-
-Open the extension's side panel. You should see:
-- **Connected** (green dot)
-- **Sessions** list with your Claude Code sessions
-- **Sources** panel
-- **Components** (DOM tree) panel
-
-If you see "Setup Required", run the install command shown on screen.
-
-### Uninstall
-
-```bash
-npx claude-code-browser uninstall
+```powershell
+node apps/chrome-bridge/dist/install.js install <extension-id>
 ```
 
-Removes the native messaging host and `/browse` skill.
+The extension ID is required: Chrome Native Messaging manifests allow only the extension origin that was registered. Reload the extension (or restart Chrome) after registration.
 
-## Usage
+To remove the registration:
 
-### From VS Code (recommended)
-
-```
-/browse http://localhost:3000
+```powershell
+npm run uninstall-local-chrome
 ```
 
-This:
-1. Registers all your workspace directories as sources
-2. Opens the URL in Chrome
-3. Sources appear in the extension's Sources panel automatically
+## MCP configuration examples
 
-### From the Side Panel
+Build before configuring a client. The MCP server is stdio-only; it connects to the locally running Kv host using discovery metadata in `%LOCALAPPDATA%\KvBrowserBridge\bridge.json`.
 
-1. Click the extension icon to open the side panel
-2. **⌖** Pick elements → they appear as chips in your message
-3. Type your question and send
-4. Claude reads the page, your source code, and responds
-5. Queue follow-up messages while Claude is working
+Codex configuration example:
 
-### Keyboard Shortcuts
-
-| Key | Action |
-|-----|--------|
-| Enter | Send message (or queue if agent running) |
-| Shift+Enter | New line |
-| Escape | Cancel element picker |
-
-## Project Structure
-
-```
-claude-code-browser/
-├── apps/
-│   ├── extension/          # Chrome Extension (Manifest V3, React, Vite)
-│   │   ├── src/
-│   │   │   ├── background/ # Service worker (native messaging, content script injection)
-│   │   │   ├── content/    # Content script (element picker, DOM tree, highlighting)
-│   │   │   └── sidepanel/  # React app (chat, queue, DOM tree, sources, stores)
-│   │   └── dist/           # Built extension (load this in Chrome)
-│   ├── host/               # Native Messaging Host (Node.js)
-│   │   └── src/
-│   │       ├── host.ts     # Main entry (message loop, source polling)
-│   │       ├── agent-manager.ts  # Claude Agent SDK integration
-│   │       ├── browser-tools.ts  # Custom browser tool definitions
-│   │       └── install.ts  # Cross-platform installer
-│   └── server/             # (Legacy) WebSocket server
-├── packages/
-│   └── shared/             # Shared TypeScript types (ws-protocol)
-├── skills/
-│   └── browse/SKILL.md     # /browse skill for Claude Code
-└── package.json            # Monorepo root (npm workspaces + Turborepo)
+```powershell
+codex mcp add kv-browser-bridge -- node C:\path\to\kv-browser-bridge\apps\codex-mcp-server\dist\server.js
 ```
 
-## Development
+Generic MCP client or Claude Code configuration example:
 
-```bash
-npm run build              # Build everything
-npm run build:extension    # Build Chrome extension only
-npm run build:host         # Build native host only
-npm run dev:extension      # Watch mode for extension
+```json
+{
+  "mcpServers": {
+    "kv-browser-bridge": {
+      "command": "node",
+      "args": ["C:\\path\\to\\kv-browser-bridge\\apps\\codex-mcp-server\\dist\\server.js"]
+    }
+  }
+}
 ```
 
-After rebuilding the extension, click the refresh icon on `chrome://extensions` to reload.
+## Security boundaries
 
-## Author
+- Chrome shows its debugging indicator when the `debugger` permission is active.
+- Native Messaging is bound to the explicitly registered extension ID.
+- The Kv host accepts local Named Pipe connections authenticated by its generated bearer token.
+- Optional bookmark, download-status, and extension-inventory permissions are requested only from the extension UI. Extension inventory is read-only.
+- Screenshot files are created only when an MCP request specifies an artifact path. Browser actions can still affect the currently selected tab, so use the bridge only with clients and prompts you trust.
 
-Developed by [Fineguide.AI](https://fineguide.ai) — [Corneliu Maftuleac](https://x.com/cmaftuleac).
+## What Kv Browser Bridge does not do
 
-## License
+- It does not provide a hosted/cloud service, telemetry service, or account.
+- It does not read or export Chrome cookies, profile data, or browser storage.
+- It does not start another browser, clone a profile, or use Playwright.
+- It does not make the inactive legacy product path part of the Kv runtime.
 
-MIT — free to use, modify, and distribute.
+## Development and checks
 
-Copyright (c) 2026 Fineguide.AI (Corneliu Maftuleac). See [LICENSE](LICENSE) for full terms.
+```powershell
+npm run test:branding
+npm run test:local-chrome
+npm run build:local-chrome
+npm run check:local-chrome
+```
+
+## Legacy directories
+
+`apps/host`, `apps/server`, `apps/desktop`, `packages/agent-core`, and `skills` are retained legacy code from the prior product. They are not part of the Kv Browser Bridge path. The active Kv path is `apps/extension`, `apps/chrome-bridge`, `apps/codex-mcp-server`, and `packages/browser-protocol`.

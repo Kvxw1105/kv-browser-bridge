@@ -101,10 +101,9 @@ export function useReviewPrompt(): {
       const prev = (res[REVIEW_KEY] as ReviewState | undefined) ?? defaultReview();
       chrome.storage.local.set({ [REVIEW_KEY]: { ...prev, rated: true } });
     });
-    // Hardcoded so clicks work in unpacked / dev installs too.
-    // For Chrome Web Store users, chrome.runtime.id matches this ID.
-    const url = 'https://chromewebstore.google.com/detail/claude-code-browser/mnibceaaapcppokpnnljohdlmojjgbkf/reviews';
-    chrome.tabs.create({ url, active: true });
+    // Kv Browser Bridge is loaded from source; do not send users to the
+    // predecessor product's Chrome Web Store listing.
+    chrome.tabs.create({ url: 'chrome://extensions/', active: true });
     setHiddenInSession(true);
   }, []);
 
