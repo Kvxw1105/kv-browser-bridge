@@ -122,13 +122,6 @@ chrome.runtime.onInstalled.addListener(({ reason }) => {
     });
   }
   connectBridge();
-  void chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch((error) => {
-    log('sidepanel_behavior_failed', { error: error instanceof Error ? error.message : String(error) });
-  });
-});
-
-void chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch((error) => {
-  log('sidepanel_behavior_failed', { error: error instanceof Error ? error.message : String(error) });
 });
 
 chrome.runtime.onConnect.addListener((port) => {
