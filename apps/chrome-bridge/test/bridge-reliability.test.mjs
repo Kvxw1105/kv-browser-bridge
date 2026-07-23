@@ -10,3 +10,11 @@ test('native disconnect uses the ChromeBridge pending-request policy for writes'
   assert.equal(read.code, 'CONNECTION_CLOSED');
   assert.equal(read.retryable, true);
 });
+
+test('actual ChromeBridge native-error handler rejects a seeded write as unknown outcome', async () => {
+  process.env.KV_BRIDGE_TEST = '1';
+  const { testActualNativeDisconnect } = await import('../dist/bridge.js');
+  const error = await testActualNativeDisconnect('non_idempotent_write');
+  assert.equal(error.code, 'UNKNOWN_OUTCOME');
+  assert.equal(error.retryable, false);
+});

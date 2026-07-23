@@ -431,4 +431,23 @@ function asRpcHello(value: unknown): { id: string; params: { token: string; clie
   };
 }
 
-new ChromeBridge().start();
+/** Test seam: exercises the real private native-error handler with a pending request. */
+export async function testActualNativeDisconnect(operationClass: BrowserRequest['operationClass']): Promise<BridgeError> {
+  const bridge = Object.create(ChromeBridge.prototype) as ChromeBridge;
+  const rejected = new Promise<BridgeError>((resolve) => {
+    (bridge as any).pending = new Map([['test', {
+      resolve: () => undefined,
+      reject: resolve,
+      timer: setTimeout(() => undefined, 60_000),
+      method: 'browser_click',
+      startedAt: Date.now(),
+      operationClass,
+    }]]);
+  });
+  (bridge as any).recordError = () => undefined;
+  (bridge as any).broadcastStatus = () => undefined;
+  (bridge as any).handleNativeError(new Error('fake native disconnect'));
+  return rejected;
+}
+
+if (process.env.KV_BRIDGE_TEST !== '1') new ChromeBridge().start();
