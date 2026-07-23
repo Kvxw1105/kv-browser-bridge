@@ -2,7 +2,7 @@ import { createConnection, type Socket } from 'node:net';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { operationClassForMethod, PerTabWriteQueue, timeoutErrorForMethod } from './reliability.js';
+import { healthState, operationClassForMethod, PerTabWriteQueue, timeoutErrorForMethod } from './reliability.js';
 
 export type BridgeErrorCode =
   | 'BRIDGE_UNAVAILABLE'
@@ -146,7 +146,7 @@ export class BridgeClient {
   getStatus(): BridgeStatus {
     const bridge = this.bridgeStatus as { extensionConnected?: unknown; nativeReady?: unknown; lastExtensionMessageAt?: unknown } | undefined;
     const socketReady = this.socket !== null && !this.socket.destroyed && this.authenticated;
-    const extensionReady = bridge?.extensionConnected === true && bridge?.nativeReady === true;
+    const health = healthState(socketReady, bridge as { extensionConnected?: boolean; nativeReady?: boolean } | undefined);
     return {
       connected: this.socket !== null && !this.socket.destroyed,
       authenticated: this.authenticated,
@@ -155,8 +155,8 @@ export class BridgeClient {
       lastConnectedAt: this.lastConnectedAt,
       lastError: this.lastError,
       bridge: this.bridgeStatus,
-      ready: socketReady && extensionReady,
-      degraded: socketReady && !extensionReady,
+      ready: health.ready,
+      degraded: health.degraded,
     };
   }
 
