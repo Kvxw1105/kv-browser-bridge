@@ -142,13 +142,20 @@ chrome.runtime.onConnect.addListener((port) => {
   port.onDisconnect.addListener(() => panelPorts.delete(port));
 });
 
-chrome.action.onClicked.addListener((tab) => {
+chrome.action.onClicked.addListener(async (tab) => {
   if (tab.id == null) return;
   setSelectedTab(tab.id);
-  chrome.sidePanel.setOptions({ tabId: tab.id, path: `sidepanel.html?tab=${tab.id}`, enabled: true }, () => {
-    void chrome.runtime.lastError;
-    chrome.sidePanel.open({ windowId: tab.windowId });
-  });
+  try {
+    await chrome.sidePanel.setOptions({ tabId: tab.id, path: `sidepanel.html?tab=${tab.id}`, enabled: true });
+    await chrome.sidePanel.open({ tabId: tab.id });
+  } catch (error) {
+    // The Side Panel is optional for the Bridge; a UI failure must not disrupt
+    // Native Messaging or background browser control.
+    log('sidepanel_open_failed', {
+      tabId: tab.id,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
