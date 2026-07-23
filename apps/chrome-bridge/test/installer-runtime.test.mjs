@@ -19,100 +19,132 @@ function fakeFs(initial = {}) {
   };
 }
 
-const EXTENSION_ID = 'abcdefghijklmnopabcdefghijklmnop';
-const base = { appDataDir: 'C:\\kv-test-appdata', distDir: 'C:\\kv-test-dist', nodePath: 'C:\\node.exe' };
-
-test('installer uses injected registry runner, atomic files, and consistency query', () => {
-  const paths = pathsForInstall(base);
-  const fs = fakeFs({ [paths.bridge]: 'bridge', 'C:\\node.exe': 'node' });
-  let registry;
+function registry(initial = { keyExists: false, value: undefined }, hooks = {}) {
+  const state = { ...initial };
   const calls = [];
   const runner = (args) => {
     calls.push(args);
-    if (args[0] === 'add') { registry = args[args.indexOf('/d') + 1]; return { status: 0, stdout: '', stderr: '' }; }
-    if (args[0] === 'query') return { status: 0, stdout: `    (Default)    REG_SZ    ${registry}\r\n`, stderr: '' };
-    return { status: 0, stdout: '', stderr: '' };
+    const hook = hooks[args[0]];
+    const forced = hook?.(args, state, calls);
+    if (forced) return forced;
+    if (args[0] === 'query') {
+      if (!state.keyExists) return { status: 1, stdout: '', stderr: '' };
+      if (!args.includes('/ve')) return { status: 0, stdout: 'key exists\r\n', stderr: '' };
+      return state.value === undefined
+        ? { status: 1, stdout: '', stderr: '' }
+        : { status: 0, stdout: `    (Default)    REG_SZ    ${state.value}\r\n`, stderr: '' };
+    }
+    if (args[0] === 'add') { state.keyExists = true; state.value = args[args.indexOf('/d') + 1]; return { status: 0, stdout: '', stderr: '' }; }
+    if (args[0] === 'delete') {
+      if (args.includes('/ve')) state.value = undefined;
+      else { state.keyExists = false; state.value = undefined; }
+      return { status: 0, stdout: '', stderr: '' };
+    }
+    throw new Error(`unexpected reg command ${args[0]}`);
   };
-  install(EXTENSION_ID, { ...base, fs, runner });
-  assert.equal(JSON.parse(fs.files.get(paths.manifest)).path, paths.wrapper);
-  assert.match(fs.files.get(paths.wrapper), /managed by Kv/);
-  assert.equal(calls.filter((call) => call[0] === 'query').length, 1);
+  return { state, calls, runner };
+}
+
+const EXTENSION_ID = 'abcdefghijklmnopabcdefghijklmnop';
+const base = { appDataDir: 'C:\\kv-test-appdata', distDir: 'C:\\kv-test-dist', nodePath: 'C:\\node.exe' };
+
+function expected(paths) {
+  return {
+    wrapper: createKvWrapper(paths.bridge, base.nodePath),
+    manifest: `${JSON.stringify(createNativeHostManifest(EXTENSION_ID, paths.wrapper), null, 2)}\n`,
+  };
+}
+
+test('installer uses injected stateful registry runner, atomic files, and consistency query', () => {
+  const paths = pathsForInstall(base);
+  const fs = fakeFs({ [paths.bridge]: 'bridge', 'C:\\node.exe': 'node' });
+  const reg = registry();
+  install(EXTENSION_ID, { ...base, fs, runner: reg.runner });
+  const want = expected(paths);
+  assert.equal(fs.files.get(paths.manifest), want.manifest);
+  assert.equal(fs.files.get(paths.wrapper), want.wrapper);
+  assert.deepEqual(reg.state, { keyExists: true, value: paths.manifest });
   assert.equal([...fs.files.keys()].some((path) => path.endsWith('.tmp')), false);
 });
 
-test('uninstall leaves foreign registry, manifest, and wrapper untouched', () => {
+test('installation refuses spoofed markers and incomplete prior triads without modifying them', () => {
   const paths = pathsForInstall(base);
-  const fs = fakeFs({ [paths.manifest]: JSON.stringify({ name: 'foreign' }), [paths.wrapper]: '@echo off' });
-  const calls = [];
-  const runner = (args) => { calls.push(args); return { status: 0, stdout: `REG_SZ    ${paths.manifest}\r\n`, stderr: '' }; };
-  uninstall({ ...base, fs, runner });
-  assert.equal(fs.files.has(paths.manifest), true);
-  assert.equal(fs.files.has(paths.wrapper), true);
-  assert.equal(calls.some((call) => call[0] === 'delete'), false);
+  const fs = fakeFs({ [paths.bridge]: 'bridge', [paths.wrapper]: 'REM Kv Browser Bridge wrapper - managed by Kv\r\n@echo spoof' });
+  const reg = registry();
+  assert.throws(() => install(EXTENSION_ID, { ...base, fs, runner: reg.runner }), /inconsistent or non-Kv/);
+  assert.match(fs.files.get(paths.wrapper), /spoof/);
+  assert.deepEqual(reg.state, { keyExists: false, value: undefined });
 });
 
-test('installer restores prior Kv artifacts when registry add or verification fails', () => {
-  const paths = pathsForInstall(base);
-  const oldWrapper = createKvWrapper(paths.bridge, 'C:\\old-node.exe');
-  const oldManifest = `${JSON.stringify(createNativeHostManifest('bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', paths.wrapper), null, 2)}\n`;
-  for (const failure of ['add', 'query']) {
-    const fs = fakeFs({ [paths.bridge]: 'bridge', [paths.wrapper]: oldWrapper, [paths.manifest]: oldManifest });
-    const runner = (args) => {
-      if (args[0] === failure) return { status: 1, stdout: '', stderr: 'injected registry failure' };
-      return { status: 0, stdout: '', stderr: '' };
-    };
-    assert.throws(() => install(EXTENSION_ID, { ...base, fs, runner }), /Registry/);
-    assert.equal(fs.files.get(paths.wrapper), oldWrapper);
-    assert.equal(fs.files.get(paths.manifest), oldManifest);
-  }
-});
-
-test('installer refuses foreign artifacts and never overwrites a concurrent change', () => {
-  const paths = pathsForInstall(base);
-  const foreignFs = fakeFs({ [paths.bridge]: 'bridge', [paths.wrapper]: '@echo foreign' });
-  assert.throws(() => install(EXTENSION_ID, { ...base, fs: foreignFs, runner: () => ({ status: 0, stdout: '', stderr: '' }) }), /non-Kv artifact/);
-  assert.equal(foreignFs.files.get(paths.wrapper), '@echo foreign');
-
-  const oldManifest = `${JSON.stringify(createNativeHostManifest('bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', paths.wrapper), null, 2)}\n`;
-  const fs = fakeFs({ [paths.bridge]: 'bridge', [paths.manifest]: oldManifest });
-  const runner = (args) => {
-    if (args[0] === 'add') return { status: 0, stdout: '', stderr: '' };
-    // Simulate another writer changing the wrapper between our write and validation.
-    fs.files.set(paths.wrapper, '@echo foreign concurrent writer');
-    return { status: 0, stdout: `REG_SZ    ${paths.manifest}\r\n`, stderr: '' };
-  };
-  assert.throws(() => install(EXTENSION_ID, { ...base, fs, runner }), /consistency/);
-  assert.equal(fs.files.get(paths.wrapper), '@echo foreign concurrent writer');
-  assert.equal(fs.files.get(paths.manifest), oldManifest);
-});
-
-test('installer rejects a tampered manifest even when its schema remains Kv-shaped', () => {
+test('registry add failure restores a clean filesystem and leaves registry absent', () => {
   const paths = pathsForInstall(base);
   const fs = fakeFs({ [paths.bridge]: 'bridge' });
-  const runner = (args) => {
-    if (args[0] === 'add') {
-      const tampered = JSON.parse(fs.files.get(paths.manifest));
-      tampered.description = 'Kv Browser Bridge (tampered)';
-      fs.files.set(paths.manifest, `${JSON.stringify(tampered, null, 2)}\n`);
-      return { status: 0, stdout: '', stderr: '' };
-    }
-    return { status: 0, stdout: `REG_SZ    ${paths.manifest}\r\n`, stderr: '' };
-  };
-  assert.throws(() => install(EXTENSION_ID, { ...base, fs, runner }), /exact manifest/);
-  assert.match(fs.files.get(paths.manifest), /tampered/);
+  const reg = registry(undefined, { add: () => ({ status: 1, stdout: '', stderr: 'add denied' }) });
+  assert.throws(() => install(EXTENSION_ID, { ...base, fs, runner: reg.runner }), /Registry add failed/);
+  assert.equal(fs.files.has(paths.wrapper), false);
+  assert.equal(fs.files.has(paths.manifest), false);
+  assert.deepEqual(reg.state, { keyExists: false, value: undefined });
 });
 
-test('uninstall never deletes registry solely because a Kv wrapper exists', () => {
+test('query failure after add conditionally rolls back the registry key and artifacts', () => {
   const paths = pathsForInstall(base);
-  const fs = fakeFs({
-    [paths.manifest]: JSON.stringify({ name: 'foreign' }),
-    [paths.wrapper]: createKvWrapper(paths.bridge, 'C:\\node.exe'),
+  const fs = fakeFs({ [paths.bridge]: 'bridge' });
+  let added = false;
+  let verificationFailed = false;
+  const reg = registry(undefined, {
+    add: () => { added = true; return undefined; },
+    query: (args) => {
+      if (added && args.includes('/ve') && !verificationFailed) {
+        verificationFailed = true;
+        return { status: 1, stdout: '', stderr: 'verification denied' };
+      }
+      return undefined;
+    },
   });
-  const calls = [];
-  const runner = (args) => { calls.push(args); return { status: 0, stdout: `REG_SZ    ${paths.manifest}\r\n`, stderr: '' }; };
-  uninstall({ ...base, fs, runner });
-  assert.equal(calls.some((call) => call[0] === 'delete'), false);
-  assert.equal(fs.files.has(paths.manifest), true);
+  assert.throws(() => install(EXTENSION_ID, { ...base, fs, runner: reg.runner }), /verification query/);
+  assert.deepEqual(reg.state, { keyExists: false, value: undefined });
+  assert.equal(fs.files.has(paths.wrapper), false);
+  assert.equal(fs.files.has(paths.manifest), false);
+});
+
+test('registry rollback preserves a concurrent registry value and artifact tampering', () => {
+  const paths = pathsForInstall(base);
+  const fs = fakeFs({ [paths.bridge]: 'bridge' });
+  let added = false;
+  const reg = registry(undefined, {
+    add: () => { added = true; return undefined; },
+    query: (args, state) => {
+      if (added && args.includes('/ve')) {
+        state.keyExists = true;
+        state.value = 'C:\\foreign-manifest.json';
+        fs.files.set(paths.wrapper, '@echo foreign concurrent writer');
+        return { status: 0, stdout: `REG_SZ    ${state.value}\r\n`, stderr: '' };
+      }
+      return undefined;
+    },
+  });
+  assert.throws(() => install(EXTENSION_ID, { ...base, fs, runner: reg.runner }), /consistency/);
+  assert.equal(reg.state.value, 'C:\\foreign-manifest.json');
+  assert.equal(fs.files.get(paths.wrapper), '@echo foreign concurrent writer');
+  assert.equal(fs.files.has(paths.manifest), false);
+});
+
+test('uninstall removes only an exact generated triad and rejects spoofed marker bytes', () => {
+  const paths = pathsForInstall(base);
+  const want = expected(paths);
+  const fs = fakeFs({ [paths.bridge]: 'bridge', [paths.wrapper]: want.wrapper, [paths.manifest]: want.manifest });
+  const reg = registry({ keyExists: true, value: paths.manifest });
+  uninstall({ ...base, fs, runner: reg.runner });
+  assert.equal(fs.files.has(paths.wrapper), false);
+  assert.equal(fs.files.has(paths.manifest), false);
+  assert.deepEqual(reg.state, { keyExists: false, value: undefined });
+
+  const spoofFs = fakeFs({ [paths.bridge]: 'bridge', [paths.wrapper]: `${want.wrapper}REM Kv Browser Bridge wrapper - managed by Kv\r\n`, [paths.manifest]: want.manifest });
+  const spoofReg = registry({ keyExists: true, value: paths.manifest });
+  uninstall({ ...base, fs: spoofFs, runner: spoofReg.runner });
+  assert.equal(spoofFs.files.has(paths.wrapper), true);
+  assert.equal(spoofFs.files.has(paths.manifest), true);
+  assert.equal(spoofReg.state.value, paths.manifest);
 });
 
 test('doctor reports structured required failures without registry access', () => {

@@ -22,7 +22,7 @@ npm run doctor-local-chrome
 node apps/chrome-bridge/dist/install.js doctor --json
 ```
 
-It checks the Node runtime and bridge path, Native Messaging manifest schema/path/origin, current-user registry registration, discovery config, log-directory writability, and reports Named Pipe status on a best-effort basis. Required failures produce a nonzero exit code.
+It checks the Node runtime and bridge path, Native Messaging manifest schema/path/origin, current-user registry registration, discovery config, and log-directory writability. It reports discovery metadata for the Named Pipe but does not currently open or probe Pipe connectivity. Required failures produce a nonzero exit code.
 
 If a check fails, rebuild with `npm run build:local-chrome`, re-run installation with the exact unpacked extension ID, then reload the extension. Do not delete or replace an artifact the installer identifies as non-Kv-owned.
 

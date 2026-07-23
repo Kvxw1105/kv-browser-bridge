@@ -9,8 +9,6 @@ import {
   KV_NATIVE_HOST_NAME,
   createKvWrapper,
   createNativeHostManifest,
-  isKvOwnedManifest,
-  isKvOwnedWrapper,
   isValidNativeHostManifest,
   parseInstallerArgs,
   validateBridgePath,
@@ -70,10 +68,6 @@ function artifactContents(fs: InstallerFs, path: string): string | undefined {
   return fs.existsSync(path) ? fs.readFileSync(path, 'utf8') : undefined;
 }
 
-function requireManagedPriorArtifact(path: string, contents: string | undefined, owned: boolean): void {
-  if (contents !== undefined && !owned) throw new Error(`Refusing to overwrite a non-Kv artifact: ${path}`);
-}
-
 function restoreArtifact(fs: InstallerFs, path: string, previous: string | undefined, expectedCurrent: string): void {
   // Do not clobber a file another process changed after our write.
   if (artifactContents(fs, path) !== expectedCurrent) return;
@@ -87,6 +81,18 @@ function registryValue(result: RegistryResult): string | undefined {
   return line?.replace(/^.*REG_SZ\s+/i, '').trim() || undefined;
 }
 
+type RegistrySnapshot = { keyExists: boolean; value?: string };
+
+function readRegistrySnapshot(runner: RegistryRunner, action: string): RegistrySnapshot {
+  const key = runner(['query', registryKey]);
+  if (key.status === 1) return { keyExists: false };
+  if (key.status !== 0) requireRegistry(runner, action, ['query', registryKey]);
+  const value = runner(['query', registryKey, '/ve']);
+  if (value.status === 1) return { keyExists: true };
+  if (value.status !== 0) requireRegistry(runner, `${action} value`, ['query', registryKey, '/ve']);
+  return { keyExists: true, value: registryValue(value) };
+}
+
 function requireRegistry(runner: RegistryRunner, action: string, args: string[]): RegistryResult {
   const result = runner(args);
   if (result.status !== 0) {
@@ -94,6 +100,14 @@ function requireRegistry(runner: RegistryRunner, action: string, args: string[])
     throw new Error(`Registry ${action} failed for ${registryKey}: ${details || `exit code ${result.status ?? 'unknown'}`}`);
   }
   return result;
+}
+
+function restoreRegistryIfUnchanged(runner: RegistryRunner, previous: RegistrySnapshot, expectedValue: string): void {
+  const current = readRegistrySnapshot(runner, 'rollback query');
+  if (!current.keyExists || current.value !== expectedValue) return;
+  if (!previous.keyExists) requireRegistry(runner, 'rollback delete', ['delete', registryKey, '/f']);
+  else if (previous.value === undefined) requireRegistry(runner, 'rollback delete value', ['delete', registryKey, '/ve', '/f']);
+  else requireRegistry(runner, 'rollback restore value', ['add', registryKey, '/ve', '/t', 'REG_SZ', '/d', previous.value, '/f']);
 }
 
 /** Node has no supported DACL descriptor API. This intentionally does not pretend chmod enforces Windows ACLs. */
@@ -113,14 +127,19 @@ export function install(extensionId: string, deps: { fs?: InstallerFs; runner?: 
   const manifestContents = `${JSON.stringify(manifest, null, 2)}\n`;
   const previousWrapper = artifactContents(fs, paths.wrapper);
   const previousManifest = artifactContents(fs, paths.manifest);
-  requireManagedPriorArtifact(paths.wrapper, previousWrapper, previousWrapper === undefined || isKvOwnedWrapper(previousWrapper));
-  requireManagedPriorArtifact(paths.manifest, previousManifest, previousManifest === undefined || isKvOwnedManifest(readJson(fs, paths.manifest)));
+  const previousRegistry = readRegistrySnapshot(runner, 'snapshot');
+  const hasPriorState = previousWrapper !== undefined || previousManifest !== undefined || previousRegistry.keyExists;
+  if (hasPriorState && (previousWrapper !== wrapper || previousManifest !== manifestContents || previousRegistry.value !== paths.manifest)) {
+    throw new Error('Refusing to replace an inconsistent or non-Kv installation state.');
+  }
   fs.mkdirSync(dirname(paths.manifest), { recursive: true });
+  let registryAdded = false;
   try {
     atomicWriteFile(fs, paths.wrapper, wrapper);
     if (artifactContents(fs, paths.wrapper) !== wrapper) throw new Error('Wrapper changed while installation was in progress.');
     atomicWriteFile(fs, paths.manifest, manifestContents);
     requireRegistry(runner, 'add', ['add', registryKey, '/ve', '/t', 'REG_SZ', '/d', paths.manifest, '/f']);
+    registryAdded = true;
     const registeredPath = registryValue(requireRegistry(runner, 'verification query', ['query', registryKey, '/ve']));
     if (artifactContents(fs, paths.manifest) !== manifestContents || artifactContents(fs, paths.wrapper) !== wrapper || registeredPath !== paths.manifest) {
       throw new Error('Installation consistency verification failed: exact manifest, wrapper, and HKCU registration must agree.');
@@ -128,27 +147,29 @@ export function install(extensionId: string, deps: { fs?: InstallerFs; runner?: 
   } catch (error) {
     restoreArtifact(fs, paths.manifest, previousManifest, manifestContents);
     restoreArtifact(fs, paths.wrapper, previousWrapper, wrapper);
+    if (registryAdded) restoreRegistryIfUnchanged(runner, previousRegistry, paths.manifest);
     throw error;
   }
   tryApplyWindowsAcl();
 }
 
-export function uninstall(deps: { fs?: InstallerFs; runner?: RegistryRunner; appDataDir?: string; distDir?: string } = {}): void {
+export function uninstall(deps: { fs?: InstallerFs; runner?: RegistryRunner; appDataDir?: string; distDir?: string; nodePath?: string } = {}): void {
   const fs = deps.fs ?? realFs;
   const runner = deps.runner ?? defaultRegistryRunner;
   const paths = pathsForInstall(deps);
-  const manifest = readJson(fs, paths.manifest);
-  const wrapper = fs.existsSync(paths.wrapper) ? fs.readFileSync(paths.wrapper, 'utf8') : '';
-  const query = runner(['query', registryKey, '/ve']);
-  if (query.status !== 0 && query.status !== 1) requireRegistry(runner, 'query before uninstall', ['query', registryKey, '/ve']);
-  const registeredPath = registryValue(query);
-  const ownedManifest = isKvOwnedManifest(manifest, paths.wrapper);
-  const ownedWrapper = isKvOwnedWrapper(wrapper);
-  if (registeredPath === paths.manifest && ownedManifest) {
-    requireRegistry(runner, 'delete', ['delete', registryKey, '/f']);
-  }
-  if (ownedManifest) fs.rmSync(paths.manifest, { force: true });
-  if (ownedWrapper) fs.rmSync(paths.wrapper, { force: true });
+  const manifestContents = artifactContents(fs, paths.manifest);
+  const wrapperContents = artifactContents(fs, paths.wrapper);
+  const manifest = readJson(fs, paths.manifest) as { allowed_origins?: unknown } | undefined;
+  const origin = Array.isArray(manifest?.allowed_origins) ? manifest.allowed_origins[0] : undefined;
+  const extensionId = typeof origin === 'string' ? /^chrome-extension:\/\/([a-p]{32})\/$/.exec(origin)?.[1] : undefined;
+  const expectedManifest = extensionId ? `${JSON.stringify(createNativeHostManifest(extensionId, paths.wrapper), null, 2)}\n` : undefined;
+  const expectedWrapper = createKvWrapper(paths.bridge, deps.nodePath ?? process.execPath);
+  const registry = readRegistrySnapshot(runner, 'query before uninstall');
+  const exactTriad = manifestContents === expectedManifest && wrapperContents === expectedWrapper && registry.value === paths.manifest;
+  if (!exactTriad) return;
+  requireRegistry(runner, 'delete', ['delete', registryKey, '/f']);
+  fs.rmSync(paths.manifest, { force: true });
+  fs.rmSync(paths.wrapper, { force: true });
 }
 
 export type DoctorCheck = { name: string; required: boolean; ok: boolean; message: string; details?: Record<string, unknown> };
