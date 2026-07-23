@@ -1,55 +1,175 @@
 #!/usr/bin/env node
 
-import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
+import { accessSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync, constants as fsConstants } from 'node:fs';
 import { homedir, platform } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { KV_NATIVE_HOST_NAME, createNativeHostManifest, parseInstallerArgs } from './install-helpers.js';
+import {
+  KV_NATIVE_HOST_NAME,
+  createKvWrapper,
+  createNativeHostManifest,
+  isKvOwnedManifest,
+  isKvOwnedWrapper,
+  isValidNativeHostManifest,
+  parseInstallerArgs,
+  validateBridgePath,
+} from './install-helpers.js';
 
-const HOST_NAME = KV_NATIVE_HOST_NAME;
 const currentDir = dirname(fileURLToPath(import.meta.url));
+const registryKey = `HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\${KV_NATIVE_HOST_NAME}`;
 
-function appData(): string {
-  return process.env.LOCALAPPDATA ?? join(homedir(), 'AppData', 'Local');
+export type RegistryResult = { status: number | null; stdout: string; stderr: string; error?: string };
+export type RegistryRunner = (args: string[]) => RegistryResult;
+export type InstallerFs = Pick<typeof import('node:fs'), 'accessSync' | 'existsSync' | 'mkdirSync' | 'readFileSync' | 'renameSync' | 'rmSync' | 'writeFileSync'>;
+
+const realFs: InstallerFs = { accessSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync };
+
+export function defaultRegistryRunner(args: string[]): RegistryResult {
+  const result: SpawnSyncReturns<Buffer> = spawnSync('reg.exe', args, { encoding: 'buffer' });
+  return {
+    status: result.status,
+    stdout: result.stdout?.toString('utf8') ?? '',
+    stderr: result.stderr?.toString('utf8') ?? '',
+    error: result.error?.message,
+  };
 }
 
-function manifestPath(): string {
-  if (platform() !== 'win32') throw new Error('This installer currently supports Windows only.');
-  return join(appData(), 'Google', 'Chrome', 'User Data', 'NativeMessagingHosts', `${HOST_NAME}.json`);
+export function appData(env = process.env): string {
+  return env.LOCALAPPDATA ?? join(homedir(), 'AppData', 'Local');
 }
 
-function bridgePath(): string {
-  return resolve(currentDir, 'bridge.js');
+export function pathsForInstall(options: { appDataDir?: string; distDir?: string } = {}) {
+  const distDir = options.distDir ?? currentDir;
+  const appDataDir = options.appDataDir ?? appData();
+  return {
+    bridge: resolve(distDir, 'bridge.js'),
+    wrapper: join(distDir, `${KV_NATIVE_HOST_NAME}.cmd`),
+    manifest: join(appDataDir, 'Google', 'Chrome', 'User Data', 'NativeMessagingHosts', `${KV_NATIVE_HOST_NAME}.json`),
+    discovery: join(appDataDir, 'KvBrowserBridge', 'bridge.json'),
+    logDir: join(appDataDir, 'KvBrowserBridge', 'logs'),
+  };
 }
 
-function wrapperPath(): string {
-  return join(currentDir, `${HOST_NAME}.cmd`);
-}
-
-function install(extensionId: string): void {
-  const bridge = bridgePath();
-  if (!existsSync(bridge)) throw new Error(`Bridge build is missing: ${bridge}`);
-  const wrapper = wrapperPath();
-  writeFileSync(wrapper, `@echo off\r\n"${process.execPath}" "${bridge}" %*\r\n`, { encoding: 'utf8' });
-  const target = manifestPath();
-  mkdirSync(dirname(target), { recursive: true });
-  writeFileSync(target, JSON.stringify(createNativeHostManifest(extensionId, wrapper), null, 2), { encoding: 'utf8' });
-  execFileSync('reg.exe', ['add', `HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\${HOST_NAME}`, '/ve', '/t', 'REG_SZ', '/d', target, '/f'], { stdio: 'inherit' });
-  process.stdout.write(`Kv Browser Bridge registered for ${extensionId}. Reload the extension or restart Chrome.\n`);
-}
-
-function uninstall(): void {
-  const target = manifestPath();
-  if (existsSync(target)) rmSync(target);
-  const wrapper = wrapperPath();
-  if (existsSync(wrapper)) rmSync(wrapper);
+export function atomicWriteFile(fs: InstallerFs, target: string, content: string): void {
+  const temporary = `${target}.${process.pid}.${Date.now()}.tmp`;
   try {
-    execFileSync('reg.exe', ['delete', `HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\${HOST_NAME}`, '/f'], { stdio: 'ignore' });
-  } catch { /* The registry entry may already be absent. */ }
-  process.stdout.write('Kv Browser Bridge registration removed.\n');
+    fs.writeFileSync(temporary, content, { encoding: 'utf8', mode: 0o600 });
+    fs.renameSync(temporary, target);
+  } finally {
+    if (fs.existsSync(temporary)) fs.rmSync(temporary, { force: true });
+  }
 }
 
-const command = parseInstallerArgs(process.argv.slice(2));
-if (command.command === 'install') install(command.extensionId);
-else uninstall();
+function readJson(fs: InstallerFs, path: string): unknown | undefined {
+  if (!fs.existsSync(path)) return undefined;
+  try { return JSON.parse(fs.readFileSync(path, 'utf8')); } catch { return undefined; }
+}
+
+function registryValue(result: RegistryResult): string | undefined {
+  if (result.status !== 0) return undefined;
+  const line = result.stdout.split(/\r?\n/).find((item) => /REG_SZ/i.test(item));
+  return line?.replace(/^.*REG_SZ\s+/i, '').trim() || undefined;
+}
+
+function requireRegistry(runner: RegistryRunner, action: string, args: string[]): RegistryResult {
+  const result = runner(args);
+  if (result.status !== 0) {
+    const details = [result.error, result.stderr.trim(), result.stdout.trim()].filter(Boolean).join(' | ');
+    throw new Error(`Registry ${action} failed for ${registryKey}: ${details || `exit code ${result.status ?? 'unknown'}`}`);
+  }
+  return result;
+}
+
+/** Node has no supported DACL descriptor API. This intentionally does not pretend chmod enforces Windows ACLs. */
+export function tryApplyWindowsAcl(): { attempted: boolean; enforced: boolean; reason: string } {
+  return { attempted: false, enforced: false, reason: 'Node cannot safely apply a Windows DACL descriptor.' };
+}
+
+export function install(extensionId: string, deps: { fs?: InstallerFs; runner?: RegistryRunner; appDataDir?: string; distDir?: string; nodePath?: string } = {}): void {
+  if (platform() !== 'win32' && deps.appDataDir === undefined) throw new Error('This installer currently supports Windows only.');
+  const fs = deps.fs ?? realFs;
+  const runner = deps.runner ?? defaultRegistryRunner;
+  const paths = pathsForInstall(deps);
+  validateBridgePath(paths.bridge);
+  if (!isAbsolute(paths.bridge) || !fs.existsSync(paths.bridge)) throw new Error(`Bridge build is missing: ${paths.bridge}`);
+  const wrapper = createKvWrapper(paths.bridge, deps.nodePath ?? process.execPath);
+  const manifest = createNativeHostManifest(extensionId, paths.wrapper);
+  fs.mkdirSync(dirname(paths.manifest), { recursive: true });
+  atomicWriteFile(fs, paths.wrapper, wrapper);
+  atomicWriteFile(fs, paths.manifest, `${JSON.stringify(manifest, null, 2)}\n`);
+  requireRegistry(runner, 'add', ['add', registryKey, '/ve', '/t', 'REG_SZ', '/d', paths.manifest, '/f']);
+  const writtenManifest = readJson(fs, paths.manifest);
+  const writtenWrapper = fs.existsSync(paths.wrapper) ? fs.readFileSync(paths.wrapper, 'utf8') : '';
+  const registeredPath = registryValue(requireRegistry(runner, 'verification query', ['query', registryKey, '/ve']));
+  if (!isKvOwnedManifest(writtenManifest, paths.wrapper) || !isKvOwnedWrapper(writtenWrapper) || registeredPath !== paths.manifest) {
+    throw new Error('Installation consistency verification failed: manifest, wrapper, and HKCU registration must agree.');
+  }
+  tryApplyWindowsAcl();
+}
+
+export function uninstall(deps: { fs?: InstallerFs; runner?: RegistryRunner; appDataDir?: string; distDir?: string } = {}): void {
+  const fs = deps.fs ?? realFs;
+  const runner = deps.runner ?? defaultRegistryRunner;
+  const paths = pathsForInstall(deps);
+  const manifest = readJson(fs, paths.manifest);
+  const wrapper = fs.existsSync(paths.wrapper) ? fs.readFileSync(paths.wrapper, 'utf8') : '';
+  const query = runner(['query', registryKey, '/ve']);
+  if (query.status !== 0 && query.status !== 1) requireRegistry(runner, 'query before uninstall', ['query', registryKey, '/ve']);
+  const registeredPath = registryValue(query);
+  const ownedManifest = isKvOwnedManifest(manifest, paths.wrapper);
+  const ownedWrapper = isKvOwnedWrapper(wrapper);
+  if (registeredPath === paths.manifest && (ownedManifest || ownedWrapper)) {
+    requireRegistry(runner, 'delete', ['delete', registryKey, '/f']);
+  }
+  if (ownedManifest) fs.rmSync(paths.manifest, { force: true });
+  if (ownedWrapper) fs.rmSync(paths.wrapper, { force: true });
+}
+
+export type DoctorCheck = { name: string; required: boolean; ok: boolean; message: string; details?: Record<string, unknown> };
+export type DoctorReport = { ok: boolean; checks: DoctorCheck[] };
+
+function check(name: string, required: boolean, ok: boolean, message: string, details?: Record<string, unknown>): DoctorCheck {
+  return { name, required, ok, message, details };
+}
+
+export function doctor(deps: { fs?: InstallerFs; runner?: RegistryRunner; appDataDir?: string; distDir?: string; nodePath?: string } = {}): DoctorReport {
+  const fs = deps.fs ?? realFs;
+  const runner = deps.runner ?? defaultRegistryRunner;
+  const paths = pathsForInstall(deps);
+  const checks: DoctorCheck[] = [];
+  const nodePath = deps.nodePath ?? process.execPath;
+  checks.push(check('node-runtime', true, Boolean(nodePath) && fs.existsSync(nodePath), `Node ${process.version}`, { path: nodePath }));
+  checks.push(check('bridge-path', true, fs.existsSync(paths.bridge) && isAbsolute(paths.bridge), fs.existsSync(paths.bridge) ? 'Bridge build found.' : 'Bridge build is missing.', { path: paths.bridge }));
+  const manifest = readJson(fs, paths.manifest);
+  checks.push(check('manifest', true, isValidNativeHostManifest(manifest) && (manifest as { path: string }).path === paths.wrapper, manifest ? 'Native host manifest checked.' : 'Native host manifest is missing.', { path: paths.manifest }));
+  const registry = runner(['query', registryKey, '/ve']);
+  const target = registryValue(registry);
+  checks.push(check('registry-hkcu', true, registry.status === 0 && target === paths.manifest, registry.status === 0 ? 'HKCU native host registration checked.' : 'HKCU native host registration is missing.', { key: registryKey, target }));
+  const discovery = readJson(fs, paths.discovery) as Record<string, unknown> | undefined;
+  const validDiscovery = Boolean(discovery && typeof discovery.pipeName === 'string' && discovery.pipeName.length > 0 && typeof discovery.token === 'string' && discovery.token.length > 0);
+  checks.push(check('discovery-config', true, validDiscovery, validDiscovery ? 'Discovery config is valid.' : 'Discovery config is missing or invalid.', { path: paths.discovery }));
+  let logWritable = false;
+  try { fs.accessSync(paths.logDir, fsConstants.W_OK); logWritable = true; } catch { /* read-only diagnostic */ }
+  checks.push(check('log-directory', true, logWritable, logWritable ? 'Log directory is writable.' : 'Log directory is not writable or does not exist.', { path: paths.logDir }));
+  checks.push(check('bridge-pipe', false, false, validDiscovery ? 'Pipe status is best-effort only; no connection was opened.' : 'No valid discovery config for pipe status.', { pipeName: discovery?.pipeName }));
+  return { ok: checks.filter((item) => item.required).every((item) => item.ok), checks };
+}
+
+function main(): void {
+  const command = parseInstallerArgs(process.argv.slice(2));
+  if (command.command === 'install') {
+    install(command.extensionId);
+    process.stdout.write(`Kv Browser Bridge registered for ${command.extensionId}. Reload the extension or restart Chrome.\n`);
+  } else if (command.command === 'uninstall') {
+    uninstall();
+    process.stdout.write('Kv Browser Bridge registration removed when it was Kv-owned.\n');
+  } else {
+    const report = doctor();
+    if (command.json) process.stdout.write(`${JSON.stringify(report)}\n`);
+    else for (const item of report.checks) process.stdout.write(`${item.ok ? 'OK' : item.required ? 'FAIL' : 'INFO'} ${item.name}: ${item.message}\n`);
+    if (!report.ok) process.exitCode = 1;
+  }
+}
+
+if (process.env.KV_BRIDGE_TEST !== '1') main();

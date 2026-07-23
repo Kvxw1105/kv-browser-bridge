@@ -1,9 +1,12 @@
+import { isAbsolute } from 'node:path';
+
 export const KV_NATIVE_HOST_NAME = 'io.kv.browser_bridge';
 export const LEGACY_NATIVE_HOST_NAME = 'com.claude_code_browser';
 
 export type InstallerCommand =
   | { command: 'install'; extensionId: string }
-  | { command: 'uninstall' };
+  | { command: 'uninstall' }
+  | { command: 'doctor'; json: boolean };
 
 export function validateExtensionId(extensionId: string): string {
   if (!/^[a-p]{32}$/.test(extensionId)) {
@@ -13,16 +16,22 @@ export function validateExtensionId(extensionId: string): string {
 }
 
 export function parseInstallerArgs(args: string[]): InstallerCommand {
-  const [command = 'install', extensionId, ...extra] = args;
+  const [command = 'install', value, ...extra] = args;
+  if (command === 'doctor') {
+    if (extra.length > 0 || (value !== undefined && value !== '--json')) {
+      throw new Error('Usage: kv-browser-bridge-install install <extension-id> | uninstall | doctor [--json]');
+    }
+    return { command, json: value === '--json' };
+  }
   if (extra.length > 0 || (command !== 'install' && command !== 'uninstall')) {
-    throw new Error('Usage: kv-browser-bridge-install install <extension-id> | uninstall');
+    throw new Error('Usage: kv-browser-bridge-install install <extension-id> | uninstall | doctor [--json]');
   }
   if (command === 'uninstall') {
-    if (extensionId !== undefined) throw new Error('Usage: kv-browser-bridge-install install <extension-id> | uninstall');
+    if (value !== undefined) throw new Error('Usage: kv-browser-bridge-install install <extension-id> | uninstall | doctor [--json]');
     return { command };
   }
-  if (extensionId === undefined) throw new Error('Chrome extension ID is required.');
-  return { command, extensionId: validateExtensionId(extensionId) };
+  if (value === undefined) throw new Error('Chrome extension ID is required.');
+  return { command, extensionId: validateExtensionId(value) };
 }
 
 export function createNativeHostManifest(extensionId: string, wrapperPath: string): Record<string, unknown> {
@@ -33,4 +42,39 @@ export function createNativeHostManifest(extensionId: string, wrapperPath: strin
     type: 'stdio',
     allowed_origins: [`chrome-extension://${validateExtensionId(extensionId)}/`],
   };
+}
+
+export function validateBridgePath(bridgePath: string): string {
+  if (!bridgePath || !isAbsolute(bridgePath) || !/\.js$/i.test(bridgePath)) throw new Error('Bridge path must be an absolute JavaScript file path.');
+  return bridgePath;
+}
+
+export function createKvWrapper(bridgePath: string, nodePath: string): string {
+  validateBridgePath(bridgePath);
+  if (!nodePath) throw new Error('Node runtime path is required.');
+  return `@echo off\r\nREM Kv Browser Bridge wrapper - managed by Kv\r\n"${nodePath}" "${bridgePath}" %*\r\n`;
+}
+
+export function isKvOwnedWrapper(contents: string): boolean {
+  return contents.includes('REM Kv Browser Bridge wrapper - managed by Kv');
+}
+
+export function isValidNativeHostManifest(value: unknown): value is {
+  name: string; description: string; path: string; type: string; allowed_origins: string[];
+} {
+  if (typeof value !== 'object' || value === null) return false;
+  const manifest = value as Record<string, unknown>;
+  return manifest.name === KV_NATIVE_HOST_NAME
+    && manifest.description === 'Kv Browser Bridge'
+    && typeof manifest.path === 'string' && /\.cmd$/i.test(manifest.path)
+    && manifest.type === 'stdio'
+    && Array.isArray(manifest.allowed_origins)
+    && manifest.allowed_origins.length === 1
+    && typeof manifest.allowed_origins[0] === 'string'
+    && /^chrome-extension:\/\/[a-p]{32}\/$/.test(manifest.allowed_origins[0]);
+}
+
+export function isKvOwnedManifest(value: unknown, expectedWrapperPath?: string): boolean {
+  return isValidNativeHostManifest(value)
+    && (expectedWrapperPath === undefined || value.path === expectedWrapperPath);
 }

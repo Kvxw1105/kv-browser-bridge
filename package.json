@@ -37,6 +37,7 @@
     "start:web": "npm run build:web && node apps/server/dist/index.js",
     "install-local-chrome": "npm run build:local-chrome && node apps/chrome-bridge/dist/install.js install",
     "uninstall-local-chrome": "node apps/chrome-bridge/dist/install.js uninstall",
+    "doctor-local-chrome": "node apps/chrome-bridge/dist/install.js doctor --json",
     "install-host": "npm run build -w apps/host && node apps/host/dist/install.js install",
     "uninstall-host": "node apps/host/dist/install.js uninstall"
   },

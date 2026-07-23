@@ -4,6 +4,8 @@ import {
   KV_NATIVE_HOST_NAME,
   LEGACY_NATIVE_HOST_NAME,
   createNativeHostManifest,
+  isKvOwnedManifest,
+  isKvOwnedWrapper,
   parseInstallerArgs,
 } from '../dist/install-helpers.js';
 
@@ -28,10 +30,21 @@ test('requires an explicit, valid extension ID for installation', () => {
   assert.throws(() => parseInstallerArgs(['install', 'qbcdefghijklmnopabcdefghijklmnop']), /a to p/);
   assert.throws(() => parseInstallerArgs(['uninstall', EXTENSION_ID]), /Usage/);
   assert.deepEqual(parseInstallerArgs(['uninstall']), { command: 'uninstall' });
+  assert.deepEqual(parseInstallerArgs(['doctor', '--json']), { command: 'doctor', json: true });
+  assert.throws(() => parseInstallerArgs(['doctor', 'oops']), /Usage/);
 });
 
 test('Kv and legacy native host names differ', () => {
   assert.equal(KV_NATIVE_HOST_NAME, 'io.kv.browser_bridge');
   assert.equal(LEGACY_NATIVE_HOST_NAME, 'com.claude_code_browser');
   assert.notEqual(KV_NATIVE_HOST_NAME, LEGACY_NATIVE_HOST_NAME);
+});
+
+test('recognizes only Kv-owned manifest and wrapper content', () => {
+  const wrapper = 'REM Kv Browser Bridge wrapper - managed by Kv\r\n';
+  const manifest = createNativeHostManifest(EXTENSION_ID, 'C:\\bridge\\io.kv.browser_bridge.cmd');
+  assert.equal(isKvOwnedWrapper(wrapper), true);
+  assert.equal(isKvOwnedWrapper('@echo off'), false);
+  assert.equal(isKvOwnedManifest(manifest, 'C:\\bridge\\io.kv.browser_bridge.cmd'), true);
+  assert.equal(isKvOwnedManifest({ ...manifest, description: 'other' }), false);
 });
