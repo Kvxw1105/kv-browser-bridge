@@ -1,36 +1,6 @@
-import React, { lazy, Suspense } from 'react';
-import { ConnectionStatus } from './components/ConnectionStatus';
-import { SessionList } from './components/SessionList';
-import { ChatSidebar } from './components/ChatSidebar';
-import { SetupScreen } from './components/SetupScreen';
-import { useNativePort } from './hooks/useNativePort';
-import { useConnectionStore } from './stores/connection-store';
-import { useChatStore } from './stores/chat-store';
-import { SourcesPanel } from './components/SourcesPanel';
-
-const DomTreePanel = lazy(() => import('./components/DomTreePanel').then(m => ({ default: m.DomTreePanel })));
+import React from 'react';
+import { LocalBridgePanel } from './components/LocalBridgePanel';
 
 export function App() {
-  const { send } = useNativePort();
-  const status = useConnectionStore((s) => s.status);
-  const newChat = useChatStore((s) => s.newChat);
-
-  if (status !== 'connected') {
-    return <SetupScreen />;
-  }
-
-  return (
-    <div className="app-container">
-      <div className="app-topbar">
-        <ConnectionStatus />
-        <button className="app-topbar__new-chat" onClick={() => newChat()}>+ New Chat</button>
-      </div>
-      <SessionList send={send} />
-      <SourcesPanel />
-      <Suspense fallback={null}>
-        <DomTreePanel />
-      </Suspense>
-      <ChatSidebar send={send} />
-    </div>
-  );
+  return <LocalBridgePanel />;
 }

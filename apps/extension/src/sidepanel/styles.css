@@ -1406,6 +1406,54 @@ body {
   opacity: 1;
 }
 
+.local-bridge-panel {
+  min-height: 100vh;
+  padding: 24px;
+  color: #e7e5e4;
+  background: #171717;
+}
+
+.local-bridge-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid #3f3f46;
+  padding-bottom: 16px;
+}
+
+.local-bridge-panel__header h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.local-bridge-panel__state {
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.local-bridge-panel__state--connected { background: #14532d; color: #bbf7d0; }
+.local-bridge-panel__state--connecting { background: #713f12; color: #fde68a; }
+.local-bridge-panel__state--disconnected { background: #7f1d1d; color: #fecaca; }
+
+.local-bridge-panel__details {
+  margin: 24px 0 0;
+}
+
+.local-bridge-panel__details div {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr);
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid #27272a;
+}
+
+.local-bridge-panel__details dt { color: #a1a1aa; }
+.local-bridge-panel__details dd { margin: 0; overflow-wrap: anywhere; }
+
 /* ── Review Prompt Banner ───────────────────────────────────────────────── */
 
 .review-prompt {
