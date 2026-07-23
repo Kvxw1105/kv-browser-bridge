@@ -276,9 +276,15 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string)
 async function click(tabId: number, params: Record<string, unknown>): Promise<unknown> {
   const { selector, xpath } = locator(params);
   const result = await executeInPage<{ error?: string; blocked?: boolean; tag?: string; text?: string }>(tabId, (css: string, path: string) => {
-    const element = findElement(css, path);
+    let element: Element | null = null;
+    if (css) { try { element = document.querySelector(css); } catch { /* try XPath */ } }
+    if (!element && path) { try { element = document.evaluate(path, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue as Element | null; } catch { /* invalid XPath */ } }
     if (!element) return { error: 'Element not found' };
-    if (looksLikeFinalPublishControl(element)) return { blocked: true, text: (element.textContent ?? '').trim().slice(0, 160) };
+    const text = [element.textContent, element.getAttribute('aria-label'), element.getAttribute('title'), element.getAttribute('value')]
+      .filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+    const explicitSafe = /\b(save draft|draft|preview|cancel|back)\b|草稿|预览|取消|返回/i.test(text);
+    const finalPublish = /\b(publish|post|submit|release|send)\b|发布|提交|上线|发送/i.test(text);
+    if (finalPublish && !explicitSafe) return { blocked: true, text: text.slice(0, 160) };
     (element as HTMLElement).scrollIntoView({ block: 'center', inline: 'center' });
     (element as HTMLElement).click();
     return { tag: element.tagName.toLowerCase(), text: (element.textContent ?? '').trim().slice(0, 160) };
@@ -294,19 +300,22 @@ async function typeText(tabId: number, params: Record<string, unknown>): Promise
   if (typeof params.text !== 'string') throw new ToolError('INVALID_TEXT', 'text is required');
   const clear = params.clear !== false;
   const result = await executeInPage<{ error?: string; tag?: string }>(tabId, (css: string, path: string, value: string, shouldClear: boolean) => {
-    const element = findElement(css, path) as HTMLInputElement | HTMLTextAreaElement | HTMLElement | null;
-    if (!element) return { error: 'Element not found' };
-    if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
-      const prototype = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    let element: Element | null = null;
+    if (css) { try { element = document.querySelector(css); } catch { /* try XPath */ } }
+    if (!element && path) { try { element = document.evaluate(path, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue as Element | null; } catch { /* invalid XPath */ } }
+    const editable = element as HTMLInputElement | HTMLTextAreaElement | HTMLElement | null;
+    if (!editable) return { error: 'Element not found' };
+    if (editable instanceof HTMLInputElement || editable instanceof HTMLTextAreaElement) {
+      const prototype = editable instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
       const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
-      setter?.call(element, shouldClear ? value : `${element.value}${value}`);
-    } else if (element.isContentEditable) {
-      element.textContent = shouldClear ? value : `${element.textContent ?? ''}${value}`;
+      setter?.call(editable, shouldClear ? value : `${editable.value}${value}`);
+    } else if (editable.isContentEditable) {
+      editable.textContent = shouldClear ? value : `${editable.textContent ?? ''}${value}`;
     } else return { error: 'Element is not editable' };
-    element.focus();
-    element.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: value }));
-    element.dispatchEvent(new Event('change', { bubbles: true }));
-    return { tag: element.tagName.toLowerCase() };
+    editable.focus();
+    editable.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: value }));
+    editable.dispatchEvent(new Event('change', { bubbles: true }));
+    return { tag: editable.tagName.toLowerCase() };
   }, [selector, xpath, text, clear]);
   if (result.error) throw new ToolError('TYPE_FAILED', result.error, false, { selector, xpath });
   return { typed: true, characters: text.length, ...result };
@@ -332,7 +341,9 @@ async function select(tabId: number, params: Record<string, unknown>): Promise<u
   const label = typeof params.label === 'string' ? params.label : undefined;
   if (value == null && label == null) throw new ToolError('INVALID_SELECT_VALUE', 'value or label is required');
   const result = await executeInPage<{ error?: string; value?: string }>(tabId, (css: string, path: string, wantedValue?: string, wantedLabel?: string) => {
-    const element = findElement(css, path);
+    let element: Element | null = null;
+    if (css) { try { element = document.querySelector(css); } catch { /* try XPath */ } }
+    if (!element && path) { try { element = document.evaluate(path, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue as Element | null; } catch { /* invalid XPath */ } }
     if (!(element instanceof HTMLSelectElement)) return { error: 'Element is not a select control' };
     const option = Array.from(element.options).find((candidate) => candidate.value === wantedValue || candidate.label === wantedLabel || candidate.text === wantedLabel);
     if (!option) return { error: 'Matching option not found' };
@@ -402,7 +413,9 @@ async function waitFor(tabId: number, params: Record<string, unknown>): Promise<
     const matched = await executeInPage<boolean>(tabId, (css: string, path: string, containsText: string, includesUrl: string, requestedState: string) => {
       if (includesUrl && !location.href.includes(includesUrl)) return false;
       if (containsText && !(document.body?.innerText ?? '').includes(containsText)) return false;
-      const element = (!css && !path) ? null : findElement(css, path);
+      let element: Element | null = null;
+      if (css) { try { element = document.querySelector(css); } catch { /* try XPath */ } }
+      if (!element && path) { try { element = document.evaluate(path, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue as Element | null; } catch { /* invalid XPath */ } }
       if (!css && !path) return true;
       if (requestedState === 'detached') return !element;
       if (requestedState === 'hidden') {
@@ -429,9 +442,12 @@ async function getText(tabId: number, params: Record<string, unknown>): Promise<
   const { selector, xpath } = locator(params);
   const maxLength = Math.max(1, Math.min(numberParam(params.maxLength) ?? numberParam(params.maxChars) ?? 20_000, 200_000));
   const result = await executeInPage<{ error?: string; text?: string }>(tabId, (css: string, path: string, max: number) => {
-    const element = findElement(css, path);
+    let element: Element | null = null;
+    if (css) { try { element = document.querySelector(css); } catch { /* try XPath */ } }
+    if (!element && path) { try { element = document.evaluate(path, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue as Element | null; } catch { /* invalid XPath */ } }
     return element ? { text: ((element as HTMLElement).innerText || element.textContent || '').trim().slice(0, max) } : { error: 'Element not found' };
   }, [selector, xpath, maxLength]);
+  if (!result) throw new ToolError('SCRIPT_EXECUTION_FAILED', 'The page did not return text', true);
   if (result.error) throw new ToolError('ELEMENT_NOT_FOUND', result.error, false, { selector, xpath });
   return { text: result.text ?? '' };
 }
