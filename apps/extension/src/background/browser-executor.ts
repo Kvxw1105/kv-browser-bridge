@@ -30,6 +30,10 @@ export type BrowserResponse = {
 const selectedTabs = new Map<string, number>();
 const PANEL_SESSION_ID = 'extension-sidepanel';
 const debuggerTabs = new Set<number>();
+const observedTabs = new Set<number>();
+const consoleEntries = new Map<number, Array<Record<string, unknown>>>();
+const networkEntries = new Map<number, Array<Record<string, unknown>>>();
+const MAX_DEVTOOLS_ENTRIES = 200;
 
 class ToolError extends Error {
   constructor(
@@ -134,9 +138,47 @@ async function withSafeDebuggerRead<T>(tabId: number, work: () => Promise<T>): P
 }
 
 chrome.debugger.onDetach.addListener((source, reason) => {
-  if (source.tabId != null) debuggerTabs.delete(source.tabId);
+  if (source.tabId != null) { debuggerTabs.delete(source.tabId); observedTabs.delete(source.tabId); }
 });
-chrome.tabs.onRemoved.addListener((tabId) => debuggerTabs.delete(tabId));
+chrome.tabs.onRemoved.addListener((tabId) => { debuggerTabs.delete(tabId); observedTabs.delete(tabId); consoleEntries.delete(tabId); networkEntries.delete(tabId); });
+
+function appendDevtoolsEntry(store: Map<number, Array<Record<string, unknown>>>, tabId: number, entry: Record<string, unknown>): void {
+  const entries = store.get(tabId) ?? [];
+  entries.push({ at: new Date().toISOString(), ...entry });
+  if (entries.length > MAX_DEVTOOLS_ENTRIES) entries.splice(0, entries.length - MAX_DEVTOOLS_ENTRIES);
+  store.set(tabId, entries);
+}
+
+function remoteValue(value: unknown): unknown {
+  if (typeof value !== 'object' || value == null) return value;
+  const remote = value as { value?: unknown; description?: string; type?: string };
+  return remote.value ?? remote.description ?? remote.type ?? '[unavailable]';
+}
+
+chrome.debugger.onEvent.addListener((source, method, params: unknown) => {
+  const tabId = source.tabId;
+  if (tabId == null) return;
+  const data = (params ?? {}) as Record<string, any>;
+  if (method === 'Runtime.consoleAPICalled') {
+    appendDevtoolsEntry(consoleEntries, tabId, { level: data.type ?? 'log', text: Array.isArray(data.args) ? data.args.map(remoteValue).map(String).join(' ') : '', stack: data.stackTrace?.callFrames?.slice(0, 5) });
+  } else if (method === 'Runtime.exceptionThrown') {
+    appendDevtoolsEntry(consoleEntries, tabId, { level: 'error', text: data.exceptionDetails?.exception?.description ?? data.exceptionDetails?.text ?? 'Uncaught exception', stack: data.exceptionDetails?.stackTrace?.callFrames?.slice(0, 5) });
+  } else if (method === 'Network.responseReceived') {
+    const response = data.response ?? {};
+    appendDevtoolsEntry(networkEntries, tabId, { requestId: data.requestId, url: response.url, status: response.status, mimeType: response.mimeType, type: data.type, failed: Number(response.status) >= 400 });
+  } else if (method === 'Network.loadingFailed') {
+    appendDevtoolsEntry(networkEntries, tabId, { requestId: data.requestId, errorText: data.errorText, canceled: data.canceled === true, failed: true });
+  }
+});
+
+async function enableDevtoolsObservation(tabId: number): Promise<void> {
+  await ensureDebuggerAttached(tabId);
+  if (observedTabs.has(tabId)) return;
+  await sendDebuggerCommand(tabId, 'Runtime.enable');
+  await sendDebuggerCommand(tabId, 'Network.enable');
+  await sendDebuggerCommand(tabId, 'Performance.enable').catch(() => undefined);
+  observedTabs.add(tabId);
+}
 
 function locator(params: Record<string, unknown>): { selector: string; xpath: string } {
   const selector = typeof params.selector === 'string' ? params.selector : '';
@@ -496,6 +538,7 @@ async function listExtensions(params: Record<string, unknown>): Promise<unknown>
 
 async function snapshot(tabId: number, params: Record<string, unknown>): Promise<unknown> {
   const tab = await chrome.tabs.get(tabId);
+  const maxChars = Math.max(500, Math.min(numberParam(params.maxChars) ?? 12_000, 100_000));
   try {
     const tree = await withSafeDebuggerRead(tabId, () => sendDebuggerCommand<{ nodes?: Array<{ nodeId?: string; role?: { value?: string }; name?: { value?: string }; childIds?: string[] }> }>(tabId, 'Accessibility.getFullAXTree'));
     if (tree.nodes?.length) {
@@ -513,7 +556,8 @@ async function snapshot(tabId: number, params: Record<string, unknown>): Promise
         for (const childId of node.childIds ?? []) walk(childId, depth + (visible ? 1 : 0));
       };
       if (tree.nodes[0].nodeId) walk(tree.nodes[0].nodeId, 0);
-      return { tabId, title: tab.title ?? '', url: tab.url ?? '', snapshot: lines.join('\n'), format: 'accessibility' };
+      const snapshot = lines.join('\n');
+      return { tabId, title: tab.title ?? '', url: tab.url ?? '', snapshot: snapshot.slice(0, maxChars), format: 'accessibility', truncated: snapshot.length > maxChars };
     }
   } catch { /* Fall back to a DOM-only structural view. */ }
 
@@ -533,7 +577,7 @@ async function snapshot(tabId: number, params: Record<string, unknown>): Promise
     };
     return document.body ? render(document.body, 0) : '';
   }, [maxDepth]);
-  return { tabId, title: tab.title ?? '', url: tab.url ?? '', snapshot: dom, format: 'dom' };
+  return { tabId, title: tab.title ?? '', url: tab.url ?? '', snapshot: dom.slice(0, maxChars), format: 'dom', truncated: dom.length > maxChars };
 }
 
 async function screenshot(tabId: number): Promise<unknown> {
@@ -763,6 +807,61 @@ async function getUrl(tabId: number): Promise<unknown> {
   return { tabId, title: tab.title ?? '', url: tab.url ?? '' };
 }
 
+function boundedEntries(entries: Array<Record<string, unknown>>, params: Record<string, unknown>): Array<Record<string, unknown>> {
+  const limit = Math.max(1, Math.min(numberParam(params.limit) ?? 50, MAX_DEVTOOLS_ENTRIES));
+  return entries.slice(-limit);
+}
+
+async function consoleLogs(tabId: number, params: Record<string, unknown>, errorsOnly = false): Promise<unknown> {
+  await withSafeDebuggerRead(tabId, () => enableDevtoolsObservation(tabId));
+  const entries = boundedEntries(consoleEntries.get(tabId) ?? [], params);
+  return { tabId, entries: errorsOnly ? entries.filter((entry) => entry.level === 'error' || entry.level === 'warning' || entry.level === 'warn') : entries, buffered: consoleEntries.get(tabId)?.length ?? 0 };
+}
+
+async function networkRequests(tabId: number, params: Record<string, unknown>, failuresOnly = false): Promise<unknown> {
+  await withSafeDebuggerRead(tabId, () => enableDevtoolsObservation(tabId));
+  const entries = boundedEntries(networkEntries.get(tabId) ?? [], params);
+  return { tabId, entries: failuresOnly ? entries.filter((entry) => entry.failed === true) : entries, buffered: networkEntries.get(tabId)?.length ?? 0 };
+}
+
+async function responseBody(tabId: number, params: Record<string, unknown>): Promise<unknown> {
+  const requestId = typeof params.requestId === 'string' ? params.requestId : '';
+  if (!requestId) throw new ToolError('INVALID_REQUEST', 'requestId is required');
+  const maxChars = Math.max(1, Math.min(numberParam(params.maxChars) ?? 20_000, 100_000));
+  return withSafeDebuggerRead(tabId, async () => {
+    await enableDevtoolsObservation(tabId);
+    const body = await sendDebuggerCommand<{ body: string; base64Encoded: boolean }>(tabId, 'Network.getResponseBody', { requestId });
+    const text = body.body.slice(0, maxChars);
+    return { tabId, requestId, body: text, base64Encoded: body.base64Encoded === true, truncated: body.body.length > text.length, totalChars: body.body.length };
+  });
+}
+
+async function inspectElement(tabId: number, params: Record<string, unknown>, includeStyles = false): Promise<unknown> {
+  const { selector, xpath } = locator(params);
+  return withSafeDebuggerRead(tabId, async () => {
+    await ensureDebuggerAttached(tabId);
+    const nodeId = await nodeIdForLocator(tabId, selector, xpath);
+    const description = await sendDebuggerCommand<{ node: { nodeName?: string; localName?: string; nodeValue?: string; attributes?: string[]; backendNodeId?: number } }>(tabId, 'DOM.describeNode', { nodeId });
+    const box = await sendDebuggerCommand<{ model?: { content?: number[]; width?: number; height?: number } }>(tabId, 'DOM.getBoxModel', { nodeId }).catch((): { model?: { content?: number[]; width?: number; height?: number } } => ({}));
+    const base = { tabId, nodeId, node: description.node, box: box.model ? { content: box.model.content, width: box.model.width, height: box.model.height } : undefined };
+    if (!includeStyles) return base;
+    const styles = await sendDebuggerCommand<{ computedStyle: Array<{ name: string; value: string }> }>(tabId, 'CSS.getComputedStyleForNode', { nodeId }).catch(() => ({ computedStyle: [] }));
+    return { ...base, styles: styles.computedStyle };
+  });
+}
+
+async function pageMetrics(tabId: number): Promise<unknown> {
+  return withSafeDebuggerRead(tabId, async () => {
+    await enableDevtoolsObservation(tabId);
+    const [metrics, layout] = await Promise.all([
+      sendDebuggerCommand<{ metrics: Array<{ name: string; value: number }> }>(tabId, 'Performance.getMetrics'),
+      sendDebuggerCommand<Record<string, unknown>>(tabId, 'Page.getLayoutMetrics').catch(() => ({})),
+    ]);
+    const selected = Object.fromEntries(metrics.metrics.filter((metric) => ['Timestamp', 'Documents', 'Frames', 'Nodes', 'JSHeapUsedSize', 'JSHeapTotalSize', 'LayoutCount', 'RecalcStyleCount'].includes(metric.name)).map((metric) => [metric.name, metric.value]));
+    return { tabId, metrics: selected, layout };
+  });
+}
+
 export async function handleBrowserRequest(request: BrowserRequest, connectionStatus: () => unknown): Promise<BrowserResponse> {
   const params: Record<string, unknown> = { ...(request.params ?? {}), __sessionId: request.sessionId ?? PANEL_SESSION_ID };
   // Bridge implementations may forward either the compact protocol operation
@@ -808,6 +907,14 @@ export async function handleBrowserRequest(request: BrowserRequest, connectionSt
         case 'wait_for': result = await waitFor(tabId, params); break;
         case 'get_text': result = await getText(tabId, params); break;
         case 'get_url': result = await getUrl(tabId); break;
+        case 'console_logs': result = await consoleLogs(tabId, params); break;
+        case 'console_errors': result = await consoleLogs(tabId, params, true); break;
+        case 'network_requests': result = await networkRequests(tabId, params); break;
+        case 'network_failures': result = await networkRequests(tabId, params, true); break;
+        case 'get_response_body': result = await responseBody(tabId, params); break;
+        case 'inspect_element': result = await inspectElement(tabId, params, false); break;
+        case 'get_element_styles': result = await inspectElement(tabId, params, true); break;
+        case 'page_metrics': result = await pageMetrics(tabId); break;
         default: throw new ToolError('UNKNOWN_ACTION', `Unknown browser action: ${request.action}`);
       }
     }

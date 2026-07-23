@@ -30,7 +30,15 @@ export type BrowserAction =
   | 'set_files'
   | 'wait_for'
   | 'get_text'
-  | 'get_url';
+  | 'get_url'
+  | 'console_logs'
+  | 'console_errors'
+  | 'network_requests'
+  | 'network_failures'
+  | 'get_response_body'
+  | 'inspect_element'
+  | 'get_element_styles'
+  | 'page_metrics';
 
 export type BrowserToolName = `browser_${BrowserAction}`;
 export type OperationClass = 'read' | 'non_idempotent_write';
@@ -154,7 +162,7 @@ export interface BridgeConnectionStatus {
 }
 
 export function operationClassFor(action: BrowserAction): OperationClass {
-  return new Set<BrowserAction>(['get_tabs', 'find', 'download_status', 'list_bookmarks', 'list_extensions', 'snapshot', 'screenshot', 'wait_for', 'get_text', 'get_url']).has(action)
+  return new Set<BrowserAction>(['get_tabs', 'find', 'download_status', 'list_bookmarks', 'list_extensions', 'snapshot', 'screenshot', 'wait_for', 'get_text', 'get_url', 'console_logs', 'console_errors', 'network_requests', 'network_failures', 'get_response_body', 'inspect_element', 'get_element_styles', 'page_metrics']).has(action)
     ? 'read' : 'non_idempotent_write';
 }
 
@@ -175,7 +183,7 @@ export function browserActionFromTool(method: BrowserToolName): BrowserAction {
 }
 
 export function isBrowserToolName(value: string): value is BrowserToolName {
-  return /^browser_(get_tabs|new_tab|switch_tab|scroll|find|close_tab|download_status|list_bookmarks|open_bookmark|list_extensions|navigate|snapshot|screenshot|click|type|press|select|evaluate|set_files|wait_for|get_text|get_url)$/.test(value);
+  return /^browser_(get_tabs|new_tab|switch_tab|scroll|find|close_tab|download_status|list_bookmarks|open_bookmark|list_extensions|navigate|snapshot|screenshot|click|type|press|select|evaluate|set_files|wait_for|get_text|get_url|console_logs|console_errors|network_requests|network_failures|get_response_body|inspect_element|get_element_styles|page_metrics)$/.test(value);
 }
 
 export function isNativeChunk(value: unknown): value is NativeChunk {

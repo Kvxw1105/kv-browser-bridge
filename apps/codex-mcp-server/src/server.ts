@@ -120,11 +120,13 @@ server.tool('browser_snapshot', 'Return an accessibility or DOM-oriented page st
   ...{ tabId },
   mode: z.enum(['accessibility', 'dom', 'auto']).optional().describe('Snapshot representation.'),
   maxDepth: z.number().int().positive().max(100).optional().describe('Maximum tree depth.'),
+  maxChars: z.number().int().min(500).max(100_000).optional().describe('Maximum snapshot characters. Defaults to 12,000 to control token use.'),
 }, async (params) => callBridge('browser_snapshot', params));
 
 server.tool('browser_screenshot', 'Capture a PNG screenshot from an existing Chrome tab. The optional artifact path is handled by the Bridge.', {
   ...{ tabId },
   artifactPath: z.string().min(1).optional().describe('Optional absolute path where the Bridge should save the PNG.'),
+  artifactOnly: z.boolean().optional().describe('When used with artifactPath, save the PNG without returning inline base64 image data.'),
 }, async (params) => {
   log('tool_request', { method: 'browser_screenshot' });
   try {
@@ -132,7 +134,7 @@ server.tool('browser_screenshot', 'Capture a PNG screenshot from an existing Chr
     const raw = result.data ?? result.base64 ?? result.dataUrl?.replace(/^data:[^;]+;base64,/, '');
     const content: Array<{ type: 'image'; data: string; mimeType: string } | { type: 'text'; text: string }> = [];
     if (raw) content.push({ type: 'image', data: raw, mimeType: result.mimeType ?? 'image/png' });
-    content.push({ type: 'text', text: JSON.stringify({ artifactPath: result.artifactPath, captured: Boolean(raw) }, null, 2) });
+    content.push({ type: 'text', text: JSON.stringify({ artifactPath: result.artifactPath, captured: Boolean(raw) || Boolean(result.artifactPath), inlineImage: Boolean(raw) }, null, 2) });
     return { content };
   } catch (error) {
     return bridgeErrorResult(error);
@@ -195,6 +197,44 @@ server.tool('browser_get_text', 'Read text from a page or one located element.',
 }, async (params) => callBridge('browser_get_text', params));
 
 server.tool('browser_get_url', 'Return the URL and title of a Chrome tab.', { ...{ tabId } }, async (params) => callBridge('browser_get_url', params));
+
+server.tool('browser_console_logs', 'Return bounded Console API entries collected after DevTools observation was enabled for a tab.', {
+  ...{ tabId },
+  limit: z.number().int().min(1).max(200).optional(),
+}, async (params) => callBridge('browser_console_logs', params));
+
+server.tool('browser_console_errors', 'Return bounded console warnings and uncaught exceptions collected for a tab.', {
+  ...{ tabId },
+  limit: z.number().int().min(1).max(200).optional(),
+}, async (params) => callBridge('browser_console_errors', params));
+
+server.tool('browser_network_requests', 'Return bounded Network responses observed after network collection was enabled for a tab.', {
+  ...{ tabId },
+  limit: z.number().int().min(1).max(200).optional(),
+}, async (params) => callBridge('browser_network_requests', params));
+
+server.tool('browser_network_failures', 'Return bounded failed, 4xx, and 5xx Network entries observed for a tab.', {
+  ...{ tabId },
+  limit: z.number().int().min(1).max(200).optional(),
+}, async (params) => callBridge('browser_network_failures', params));
+
+server.tool('browser_get_response_body', 'Return a bounded response body for one previously observed Network request. Response data can contain sensitive page data.', {
+  ...{ tabId },
+  requestId: z.string().min(1).describe('CDP request ID returned by browser_network_requests.'),
+  maxChars: z.number().int().min(1).max(100_000).optional(),
+}, async (params) => callBridge('browser_get_response_body', params));
+
+server.tool('browser_inspect_element', 'Inspect a CSS or XPath target and return its CDP node metadata and box model.', {
+  ...{ tabId },
+  ...locator,
+}, async (params) => callBridge('browser_inspect_element', params));
+
+server.tool('browser_get_element_styles', 'Inspect a CSS or XPath target and return bounded computed CSS styles with its box model.', {
+  ...{ tabId },
+  ...locator,
+}, async (params) => callBridge('browser_get_element_styles', params));
+
+server.tool('browser_page_metrics', 'Return bounded Chrome performance and layout metrics for a tab.', { ...{ tabId } }, async (params) => callBridge('browser_page_metrics', params));
 
 server.tool('browser_connection_status', 'Return Chrome Bridge connection and authentication status without starting a browser.', {}, async () => json(bridge.getStatus()));
 

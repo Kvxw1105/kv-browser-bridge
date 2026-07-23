@@ -274,7 +274,7 @@ class ChromeBridge {
       }
       const result = await execution;
       this.idempotencyCompleted.set(cacheKey, { expiresAt: Date.now() + 30_000, result });
-      if (request.method === 'browser_screenshot') this.persistScreenshotArtifact(result, request.params?.artifactPath);
+      if (request.method === 'browser_screenshot') this.persistScreenshotArtifact(result, request.params?.artifactPath, request.params?.artifactOnly === true);
       this.writePipe(socket, { type: 'response', id: request.id, ok: true, result } satisfies PipeResponse);
     } catch (error) {
       const bridgeError = isBridgeError(error)
@@ -326,7 +326,7 @@ class ChromeBridge {
     }
   }
 
-  private persistScreenshotArtifact(result: unknown, artifactPath: unknown): void {
+  private persistScreenshotArtifact(result: unknown, artifactPath: unknown, artifactOnly = false): void {
     if (typeof artifactPath !== 'string' || !isAbsolute(artifactPath)) return;
     if (!isRecord(result)) throw this.error('INVALID_REQUEST', 'Screenshot response is invalid', false);
     const dataUrl = result.dataUrl;
@@ -337,6 +337,7 @@ class ChromeBridge {
       mkdirSync(dirname(artifactPath), { recursive: true, mode: 0o700 });
       writeFileSync(artifactPath, Buffer.from(match[1], 'base64'), { mode: 0o600 });
       result.artifactPath = artifactPath;
+      if (artifactOnly) delete result.dataUrl;
       this.logger.write('info', 'screenshot.saved', { artifactPath });
     } catch (error) {
       throw this.error('INTERNAL_ERROR', `Could not save screenshot artifact: ${error instanceof Error ? error.message : String(error)}`, false);
