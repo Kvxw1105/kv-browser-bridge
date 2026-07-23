@@ -5,7 +5,7 @@ import {
   type NativeChunk,
   type NativeMessage,
   isNativeChunk,
-} from '@claude-code-browser/browser-protocol';
+} from '@kv-browser-bridge/browser-protocol';
 
 type MessageListener = (message: NativeMessage) => void;
 type ErrorListener = (error: Error) => void;

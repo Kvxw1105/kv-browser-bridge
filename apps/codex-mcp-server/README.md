@@ -5,14 +5,14 @@ This is a standalone stdio MCP server. It never starts Chrome, Playwright, or a 
 Register a built server with Codex:
 
 ```powershell
-codex mcp add local-chrome -- node C:\path\to\claude-code-browser\apps\codex-mcp-server\dist\server.js
+codex mcp add kv-browser-bridge -- node C:\path\to\kv-browser-bridge\apps\codex-mcp-server\dist\server.js
 ```
 
-By default the server reads `%LOCALAPPDATA%\CodexLocalChrome\bridge.json`:
+By default the server reads `%LOCALAPPDATA%\KvBrowserBridge\bridge.json` (falling back to the previous `CodexLocalChrome` location for existing clients):
 
 ```json
 {
-  "pipeName": "\\\\.\\pipe\\local-chrome-user-random",
+  "pipeName": "\\\\.\\pipe\\kv-browser-bridge-user-random",
   "token": "bridge-generated-secret"
 }
 ```

@@ -9,7 +9,7 @@ export class JsonlLogger {
   readonly filePath: string;
 
   constructor(appDataDir = process.env.LOCALAPPDATA ?? join(homedir(), 'AppData', 'Local')) {
-    const logDir = join(appDataDir, 'CodexLocalChrome', 'logs');
+    const logDir = join(appDataDir, 'KvBrowserBridge', 'logs');
     mkdirSync(logDir, { recursive: true });
     this.filePath = join(logDir, `chrome-bridge-${dateStamp()}.jsonl`);
   }

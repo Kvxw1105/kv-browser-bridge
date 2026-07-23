@@ -23,7 +23,7 @@ import {
   type PipeHelloAck,
   type PipeRequest,
   type PipeResponse,
-} from '@claude-code-browser/browser-protocol';
+} from '@kv-browser-bridge/browser-protocol';
 import { JsonlLogger } from './logger.js';
 import { NativeMessagingChannel } from './native-channel.js';
 
@@ -314,7 +314,7 @@ class ChromeBridge {
   }
 
   private writeDiscovery(): void {
-    const configDir = join(process.env.LOCALAPPDATA ?? join(homedir(), 'AppData', 'Local'), 'CodexLocalChrome');
+    const configDir = join(process.env.LOCALAPPDATA ?? join(homedir(), 'AppData', 'Local'), 'KvBrowserBridge');
     if (!existsSync(configDir)) mkdirSync(configDir, { recursive: true, mode: 0o700 });
     const discovery: BridgeDiscovery = {
       protocolVersion: BRIDGE_PROTOCOL_VERSION,
@@ -352,12 +352,12 @@ class ChromeBridge {
 
 function makePipeName(): string {
   const suffix = randomBytes(12).toString('hex');
-  if (process.platform === 'win32') return `\\\\.\\pipe\\local-chrome-${process.pid}-${suffix}`;
-  return join(tmpdir(), `local-chrome-${process.pid}-${suffix}.sock`);
+  if (process.platform === 'win32') return `\\\\.\\pipe\\kv-browser-bridge-${process.pid}-${suffix}`;
+  return join(tmpdir(), `kv-browser-bridge-${process.pid}-${suffix}.sock`);
 }
 
 function makeDiscoveryPath(): string {
-  return join(process.env.LOCALAPPDATA ?? join(homedir(), 'AppData', 'Local'), 'CodexLocalChrome', 'bridge.json');
+  return join(process.env.LOCALAPPDATA ?? join(homedir(), 'AppData', 'Local'), 'KvBrowserBridge', 'bridge.json');
 }
 
 function clampTimeout(value: unknown): number {

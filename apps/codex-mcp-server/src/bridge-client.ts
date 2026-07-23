@@ -48,25 +48,38 @@ export type BridgeClientOptions = {
   log: (event: string, fields?: Record<string, unknown>) => void;
 };
 
-function configPath(): string {
-  return process.env.LOCAL_CHROME_BRIDGE_CONFIG
-    ?? join(process.env.LOCALAPPDATA ?? join(homedir(), 'AppData', 'Local'), 'CodexLocalChrome', 'bridge.json');
+function configPaths(): string[] {
+  const appData = process.env.LOCALAPPDATA ?? join(homedir(), 'AppData', 'Local');
+  const explicit = process.env.KV_BROWSER_BRIDGE_CONFIG ?? process.env.LOCAL_CHROME_BRIDGE_CONFIG;
+  if (explicit) return [explicit];
+  return [
+    join(appData, 'KvBrowserBridge', 'bridge.json'),
+    // Read the previous location as a compatibility fallback for active clients.
+    join(appData, 'CodexLocalChrome', 'bridge.json'),
+  ];
 }
 
 async function loadConfig(): Promise<{ endpoint: string; token: string }> {
   const fromEnvironment = {
-    endpoint: process.env.LOCAL_CHROME_PIPE,
-    token: process.env.LOCAL_CHROME_TOKEN,
+    endpoint: process.env.KV_BROWSER_BRIDGE_PIPE ?? process.env.LOCAL_CHROME_PIPE,
+    token: process.env.KV_BROWSER_BRIDGE_TOKEN ?? process.env.LOCAL_CHROME_TOKEN,
   };
 
   let fromFile: BridgeConfig = {};
   if (!fromEnvironment.endpoint || !fromEnvironment.token) {
-    try {
-      fromFile = JSON.parse(await readFile(configPath(), 'utf8')) as BridgeConfig;
-    } catch (error) {
+    let lastError: unknown;
+    for (const path of configPaths()) {
+      try {
+        fromFile = JSON.parse(await readFile(path, 'utf8')) as BridgeConfig;
+        break;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    if (!fromFile.pipeName && !fromFile.endpoint && !fromFile.token) {
       throw new BridgeError(
         'BRIDGE_UNAVAILABLE',
-        `Could not read Chrome Bridge configuration at ${configPath()}: ${error instanceof Error ? error.message : String(error)}`,
+        `Could not read Chrome Bridge configuration at ${configPaths().join(' or ')}: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
         true,
       );
     }

@@ -1,6 +1,6 @@
 import { getSelectedTabId, handleBrowserRequest, setSelectedTab, type BrowserResponse } from './browser-executor';
 
-const HOST_NAME = 'com.claude_code_browser';
+const HOST_NAME = 'io.kv.browser_bridge';
 const MAX_NATIVE_MESSAGE_BYTES = 480 * 1024;
 
 let nativePort: chrome.runtime.Port | null = null;
@@ -9,7 +9,7 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 const panelPorts = new Set<chrome.runtime.Port>();
 
 function log(event: string, details: Record<string, unknown> = {}): void {
-  console.info('[local-chrome-extension]', JSON.stringify({ event, at: new Date().toISOString(), ...details }));
+  console.info('[kv-browser-bridge-extension]', JSON.stringify({ event, at: new Date().toISOString(), ...details }));
 }
 
 function broadcastToPanels(message: unknown): void {

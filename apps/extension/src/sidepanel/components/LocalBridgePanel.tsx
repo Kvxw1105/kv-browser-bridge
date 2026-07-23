@@ -41,7 +41,7 @@ export function LocalBridgePanel() {
       </header>
       <dl className="local-bridge-panel__details">
         <div><dt>Bridge</dt><dd>Native Messaging</dd></div>
-        <div><dt>MCP</dt><dd>local-chrome</dd></div>
+        <div><dt>MCP</dt><dd>kv-browser-bridge</dd></div>
         <div><dt>Target</dt><dd>{target || (MY_TAB_ID == null ? 'No target tab' : `Tab ${MY_TAB_ID}`)}</dd></div>
       </dl>
       <section className="local-bridge-panel__permissions" aria-label="Optional browser access">

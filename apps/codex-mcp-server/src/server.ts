@@ -10,11 +10,11 @@ const requestTimeoutMs = Number.parseInt(process.env.LOCAL_CHROME_REQUEST_TIMEOU
 
 function log(event: string, fields: Record<string, unknown> = {}): void {
   // stderr is deliberately the sole log stream: stdout belongs exclusively to MCP stdio.
-  process.stderr.write(`${JSON.stringify({ time: new Date().toISOString(), service: 'local-chrome-mcp', event, ...fields })}\n`);
+  process.stderr.write(`${JSON.stringify({ time: new Date().toISOString(), service: 'kv-browser-bridge-mcp', event, ...fields })}\n`);
 }
 
 const bridge = new BridgeClient({ requestTimeoutMs, log });
-const server = new McpServer({ name: 'local-chrome', version: '0.1.0' });
+const server = new McpServer({ name: 'kv-browser-bridge', version: '0.1.0' });
 
 const tabId = z.number().int().positive().optional().describe('Target Chrome tab ID. Uses the Bridge-selected tab when omitted.');
 const locator = {

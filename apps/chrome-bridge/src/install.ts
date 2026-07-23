@@ -5,9 +5,9 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { KV_NATIVE_HOST_NAME, createNativeHostManifest, parseInstallerArgs } from './install-helpers.js';
 
-const HOST_NAME = 'com.claude_code_browser';
-const STORE_EXTENSION_ID = 'mnibceaaapcppokpnnljohdlmojjgbkf';
+const HOST_NAME = KV_NATIVE_HOST_NAME;
 const currentDir = dirname(fileURLToPath(import.meta.url));
 
 function appData(): string {
@@ -28,22 +28,15 @@ function wrapperPath(): string {
 }
 
 function install(extensionId: string): void {
-  if (!/^[a-z]{32}$/.test(extensionId)) throw new Error('Chrome extension ID must be 32 lowercase letters.');
   const bridge = bridgePath();
   if (!existsSync(bridge)) throw new Error(`Bridge build is missing: ${bridge}`);
   const wrapper = wrapperPath();
   writeFileSync(wrapper, `@echo off\r\n"${process.execPath}" "${bridge}" %*\r\n`, { encoding: 'utf8' });
   const target = manifestPath();
   mkdirSync(dirname(target), { recursive: true });
-  writeFileSync(target, JSON.stringify({
-    name: HOST_NAME,
-    description: 'Local Chrome Bridge for Codex',
-    path: wrapper,
-    type: 'stdio',
-    allowed_origins: [`chrome-extension://${extensionId}/`],
-  }, null, 2), { encoding: 'utf8' });
+  writeFileSync(target, JSON.stringify(createNativeHostManifest(extensionId, wrapper), null, 2), { encoding: 'utf8' });
   execFileSync('reg.exe', ['add', `HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\${HOST_NAME}`, '/ve', '/t', 'REG_SZ', '/d', target, '/f'], { stdio: 'inherit' });
-  process.stdout.write(`Chrome Bridge registered for ${extensionId}. Reload the extension or restart Chrome.\n`);
+  process.stdout.write(`Kv Browser Bridge registered for ${extensionId}. Reload the extension or restart Chrome.\n`);
 }
 
 function uninstall(): void {
@@ -54,10 +47,9 @@ function uninstall(): void {
   try {
     execFileSync('reg.exe', ['delete', `HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\${HOST_NAME}`, '/f'], { stdio: 'ignore' });
   } catch { /* The registry entry may already be absent. */ }
-  process.stdout.write('Chrome Bridge registration removed.\n');
+  process.stdout.write('Kv Browser Bridge registration removed.\n');
 }
 
-const [command = 'install', extensionId = STORE_EXTENSION_ID] = process.argv.slice(2);
-if (command === 'install') install(extensionId);
-else if (command === 'uninstall') uninstall();
-else throw new Error('Usage: local-chrome-install [install [extension-id] | uninstall]');
+const command = parseInstallerArgs(process.argv.slice(2));
+if (command.command === 'install') install(command.extensionId);
+else uninstall();
