@@ -27,6 +27,7 @@ import {
 } from '@kv-browser-bridge/browser-protocol';
 import { JsonlLogger } from './logger.js';
 import { NativeMessagingChannel } from './native-channel.js';
+import { nativeDisconnectErrorFor } from './native-disconnect.js';
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const MAX_REQUEST_TIMEOUT_MS = 5 * 60_000;
@@ -134,11 +135,11 @@ class ChromeBridge {
   private handleNativeError(error: Error): void {
     this.extensionConnected = false;
     this.nativeReady = false;
-    const bridgeError = this.error('CONNECTION_CLOSED', `Chrome Native Messaging disconnected: ${error.message}`, true);
+    const bridgeError = nativeDisconnectErrorFor('read', error.message);
     this.recordError(bridgeError);
     for (const [requestId, request] of this.pending) {
       clearTimeout(request.timer);
-      request.reject(bridgeError);
+      request.reject(nativeDisconnectErrorFor(request.operationClass, error.message));
       this.pending.delete(requestId);
     }
     this.broadcastStatus();
