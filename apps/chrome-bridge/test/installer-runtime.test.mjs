@@ -99,7 +99,7 @@ test('installer rejects a tampered manifest even when its schema remains Kv-shap
     return { status: 0, stdout: `REG_SZ    ${paths.manifest}\r\n`, stderr: '' };
   };
   assert.throws(() => install(EXTENSION_ID, { ...base, fs, runner }), /exact manifest/);
-  assert.equal(fs.files.has(paths.manifest), false);
+  assert.match(fs.files.get(paths.manifest), /tampered/);
 });
 
 test('uninstall never deletes registry solely because a Kv wrapper exists', () => {
