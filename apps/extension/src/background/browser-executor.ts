@@ -239,9 +239,38 @@ async function snapshot(tabId: number, params: Record<string, unknown>): Promise
 }
 
 async function screenshot(tabId: number): Promise<unknown> {
-  await ensureDebuggerAttached(tabId);
-  const captured = await sendDebuggerCommand<{ data: string }>(tabId, 'Page.captureScreenshot', { format: 'png' });
-  return { tabId, mimeType: 'image/png', dataUrl: `data:image/png;base64,${captured.data}` };
+  try {
+    await ensureDebuggerAttached(tabId);
+    const captured = await withTimeout(
+      sendDebuggerCommand<{ data: string }>(tabId, 'Page.captureScreenshot', { format: 'png' }),
+      10_000,
+      'Screenshot CDP request timed out',
+    );
+    return { tabId, mimeType: 'image/png', captureMethod: 'cdp', dataUrl: `data:image/png;base64,${captured.data}` };
+  } catch (cdpError) {
+    const tab = await chrome.tabs.get(tabId);
+    try {
+      const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+      return { tabId, mimeType: 'image/png', captureMethod: 'captureVisibleTab', dataUrl };
+    } catch (fallbackError) {
+      throw new ToolError(
+        'SCREENSHOT_FAILED',
+        `CDP capture failed (${cdpError instanceof Error ? cdpError.message : String(cdpError)}); visible-tab fallback failed (${fallbackError instanceof Error ? fallbackError.message : String(fallbackError)})`,
+        true,
+        { tabId },
+      );
+    }
+  }
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new ToolError('SCREENSHOT_TIMEOUT', message, true)), timeoutMs);
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      (error) => { clearTimeout(timer); reject(error); },
+    );
+  });
 }
 
 async function click(tabId: number, params: Record<string, unknown>): Promise<unknown> {
