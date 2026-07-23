@@ -26,7 +26,7 @@ export class BridgeError extends Error {
   }
 }
 
-type BridgeConfig = { pipeName?: string; endpoint?: string; token?: string };
+export type BridgeConfig = { pipeName?: string; endpoint?: string; token?: string };
 type PendingRequest = {
   resolve: (result: unknown) => void;
   reject: (error: BridgeError) => void;
@@ -59,6 +59,14 @@ function configPaths(): string[] {
   ];
 }
 
+export function selectUsableBridgeConfig(candidates: BridgeConfig[], overrides: BridgeConfig = {}): BridgeConfig | undefined {
+  return candidates.find((candidate) => {
+    const endpoint = overrides.endpoint ?? candidate.pipeName ?? candidate.endpoint;
+    const token = overrides.token ?? candidate.token;
+    return typeof endpoint === 'string' && endpoint.length > 0 && typeof token === 'string' && token.length > 0;
+  });
+}
+
 async function loadConfig(): Promise<{ endpoint: string; token: string }> {
   const fromEnvironment = {
     endpoint: process.env.KV_BROWSER_BRIDGE_PIPE ?? process.env.LOCAL_CHROME_PIPE,
@@ -67,15 +75,16 @@ async function loadConfig(): Promise<{ endpoint: string; token: string }> {
 
   let fromFile: BridgeConfig = {};
   if (!fromEnvironment.endpoint || !fromEnvironment.token) {
+    const candidates: BridgeConfig[] = [];
     let lastError: unknown;
     for (const path of configPaths()) {
       try {
-        fromFile = JSON.parse(await readFile(path, 'utf8')) as BridgeConfig;
-        break;
+        candidates.push(JSON.parse(await readFile(path, 'utf8')) as BridgeConfig);
       } catch (error) {
         lastError = error;
       }
     }
+    fromFile = selectUsableBridgeConfig(candidates, fromEnvironment) ?? {};
     if (!fromFile.pipeName && !fromFile.endpoint && !fromFile.token) {
       throw new BridgeError(
         'BRIDGE_UNAVAILABLE',

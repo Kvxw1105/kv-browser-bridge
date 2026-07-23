@@ -6,8 +6,8 @@ export type InstallerCommand =
   | { command: 'uninstall' };
 
 export function validateExtensionId(extensionId: string): string {
-  if (!/^[a-z]{32}$/.test(extensionId)) {
-    throw new Error('Chrome extension ID must be 32 lowercase letters.');
+  if (!/^[a-p]{32}$/.test(extensionId)) {
+    throw new Error('Chrome extension ID must be 32 lowercase letters from a to p.');
   }
   return extensionId;
 }

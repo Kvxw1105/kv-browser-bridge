@@ -7,7 +7,7 @@ import {
   parseInstallerArgs,
 } from '../dist/install-helpers.js';
 
-const EXTENSION_ID = 'abcdefghijklmnopqrstuvwxzyabcdef';
+const EXTENSION_ID = 'abcdefghijklmnopabcdefghijklmnop';
 
 test('builds a Kv-only native host manifest', () => {
   const manifest = createNativeHostManifest(EXTENSION_ID, 'C:\\bridge\\io.kv.browser_bridge.cmd');
@@ -25,6 +25,7 @@ test('requires an explicit, valid extension ID for installation', () => {
   assert.deepEqual(parseInstallerArgs(['install', EXTENSION_ID]), { command: 'install', extensionId: EXTENSION_ID });
   assert.throws(() => parseInstallerArgs([]), /extension ID is required/);
   assert.throws(() => parseInstallerArgs(['install', 'ABC']), /32 lowercase letters/);
+  assert.throws(() => parseInstallerArgs(['install', 'qbcdefghijklmnopabcdefghijklmnop']), /a to p/);
   assert.throws(() => parseInstallerArgs(['uninstall', EXTENSION_ID]), /Usage/);
   assert.deepEqual(parseInstallerArgs(['uninstall']), { command: 'uninstall' });
 });
