@@ -8,6 +8,9 @@ export type BridgeErrorCode =
   | 'BRIDGE_AUTH_FAILED'
   | 'BRIDGE_TIMEOUT'
   | 'BRIDGE_PROTOCOL_ERROR'
+  | 'UNKNOWN_OUTCOME'
+  | 'DEBUGGER_DETACHED'
+  | 'DEBUGGER_IN_USE'
   | 'BROWSER_NOT_CONNECTED'
   | 'TAB_NOT_FOUND'
   | 'SELECTOR_NOT_FOUND'
@@ -33,6 +36,8 @@ type PendingRequest = {
   timer: NodeJS.Timeout;
 };
 type BridgeResponse = { id?: string; result?: unknown; error?: unknown };
+type BridgeEvent = { type?: string; event?: string; data?: unknown };
+const PIPE_LINE_MAX_BYTES = 1024 * 1024;
 
 export type BridgeStatus = {
   connected: boolean;
@@ -41,6 +46,7 @@ export type BridgeStatus = {
   reconnectAttempts: number;
   lastConnectedAt?: string;
   lastError?: { code: BridgeErrorCode; message: string; at: string };
+  bridge?: unknown;
 };
 
 export type BridgeClientOptions = {
@@ -126,6 +132,8 @@ export class BridgeClient {
   private authenticated = false;
   private lastConnectedAt: string | undefined;
   private lastError: BridgeStatus['lastError'];
+  private bridgeStatus: unknown;
+  private sessionId: string | undefined;
 
   constructor(private readonly options: BridgeClientOptions) {}
 
@@ -137,6 +145,7 @@ export class BridgeClient {
       reconnectAttempts: this.reconnectAttempts,
       lastConnectedAt: this.lastConnectedAt,
       lastError: this.lastError,
+      bridge: this.bridgeStatus,
     };
   }
 
@@ -153,7 +162,7 @@ export class BridgeClient {
         reject(new BridgeError('BRIDGE_TIMEOUT', `${method} exceeded ${timeoutMs}ms.`, true));
       }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer });
-      this.write({ id, method, params });
+      this.write({ id, method, params, timeoutMs, deadlineAt: Date.now() + timeoutMs, sessionId: this.sessionId });
     });
   }
 
@@ -238,6 +247,11 @@ export class BridgeClient {
     if (typeof result === 'object' && result !== null && (result as { accepted?: boolean }).accepted === false) {
       throw new BridgeError('BRIDGE_AUTH_FAILED', 'Chrome Bridge rejected the MCP server token.');
     }
+    if (typeof result === 'object' && result !== null) {
+      const value = result as { sessionId?: unknown; bridge?: unknown };
+      this.sessionId = typeof value.sessionId === 'string' ? value.sessionId : undefined;
+      this.bridgeStatus = value.bridge;
+    }
   }
 
   private requestRaw(method: string, params: Record<string, unknown>, timeoutMs: number): Promise<unknown> {
@@ -251,11 +265,11 @@ export class BridgeClient {
         reject(new BridgeError('BRIDGE_TIMEOUT', `${method} exceeded ${timeoutMs}ms.`, true));
       }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer });
-      this.write({ id, method, params });
+      this.write({ id, method, params, timeoutMs, deadlineAt: Date.now() + timeoutMs });
     });
   }
 
-  private write(message: { id: string; method: string; params: Record<string, unknown> }): void {
+  private write(message: { id: string; method: string; params: Record<string, unknown>; timeoutMs?: number; deadlineAt?: number; sessionId?: string }): void {
     if (!this.socket || this.socket.destroyed) {
       const pending = this.pending.get(message.id);
       if (pending) {
@@ -270,6 +284,10 @@ export class BridgeClient {
 
   private readLines(data: string): void {
     this.buffer += data;
+    if (Buffer.byteLength(this.buffer, 'utf8') > PIPE_LINE_MAX_BYTES) {
+      this.protocolDisconnect('Pipe response line exceeds 1 MiB');
+      return;
+    }
     while (true) {
       const newline = this.buffer.indexOf('\n');
       if (newline < 0) return;
@@ -277,9 +295,14 @@ export class BridgeClient {
       this.buffer = this.buffer.slice(newline + 1);
       if (!line) continue;
       try {
-        this.handleResponse(JSON.parse(line) as BridgeResponse);
+        const parsed = JSON.parse(line) as BridgeResponse & BridgeEvent;
+        if (parsed.type === 'event' && parsed.event === 'connection:status') {
+          this.bridgeStatus = parsed.data;
+          this.options.log('bridge_connection_status', { bridge: parsed.data as Record<string, unknown> });
+        } else this.handleResponse(parsed);
       } catch (error) {
-        this.recordError(new BridgeError('BRIDGE_PROTOCOL_ERROR', `Invalid JSON from Chrome Bridge: ${error instanceof Error ? error.message : String(error)}`));
+        this.protocolDisconnect(`Invalid JSON from Chrome Bridge: ${error instanceof Error ? error.message : String(error)}`);
+        return;
       }
     }
   }
@@ -300,6 +323,13 @@ export class BridgeClient {
       return;
     }
     pending.resolve(response.result);
+  }
+
+  private protocolDisconnect(message: string): void {
+    const error = new BridgeError('BRIDGE_PROTOCOL_ERROR', message, true);
+    this.recordError(error);
+    this.socket?.destroy();
+    this.handleDisconnect();
   }
 
   private handleDisconnect(): void {

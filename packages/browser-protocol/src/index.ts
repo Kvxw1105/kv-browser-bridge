@@ -33,6 +33,7 @@ export type BrowserAction =
   | 'get_url';
 
 export type BrowserToolName = `browser_${BrowserAction}`;
+export type OperationClass = 'read' | 'non_idempotent_write';
 
 export interface BrowserRequest {
   type: 'browser:request';
@@ -40,6 +41,10 @@ export interface BrowserRequest {
   action: BrowserAction;
   params: Record<string, unknown>;
   timeoutMs?: number;
+  /** Stable ID supplied by the pipe caller; never regenerated downstream. */
+  sessionId?: string;
+  deadlineAt?: number;
+  operationClass?: OperationClass;
 }
 
 export interface BrowserResponse {
@@ -58,6 +63,9 @@ export type BridgeErrorCode =
   | 'NATIVE_MESSAGE_TOO_LARGE'
   | 'NATIVE_PROTOCOL_ERROR'
   | 'REQUEST_TIMEOUT'
+  | 'UNKNOWN_OUTCOME'
+  | 'DEBUGGER_DETACHED'
+  | 'DEBUGGER_IN_USE'
   | 'INTERNAL_ERROR';
 
 export interface BridgeError {
@@ -109,6 +117,9 @@ export interface PipeRequest {
   method: BrowserToolName | 'browser_connection_status';
   params?: Record<string, unknown>;
   timeoutMs?: number;
+  sessionId?: string;
+  deadlineAt?: number;
+  operationClass?: OperationClass;
 }
 
 export interface PipeResponse {
@@ -135,6 +146,18 @@ export interface BridgeConnectionStatus {
   pendingRequests: number;
   lastExtensionMessageAt?: string;
   lastError?: BridgeError;
+  instanceId?: string;
+  generation?: number;
+  nativeReady?: boolean;
+}
+
+export function operationClassFor(action: BrowserAction): OperationClass {
+  return new Set<BrowserAction>(['get_tabs', 'find', 'download_status', 'list_bookmarks', 'list_extensions', 'snapshot', 'screenshot', 'wait_for', 'get_text', 'get_url']).has(action)
+    ? 'read' : 'non_idempotent_write';
+}
+
+export function deadlineExpired(deadlineAt: unknown, now = Date.now()): boolean {
+  return typeof deadlineAt === 'number' && Number.isFinite(deadlineAt) && deadlineAt <= now;
 }
 
 export interface BridgeDiscovery {

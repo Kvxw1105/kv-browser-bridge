@@ -19,6 +19,7 @@ import {
   type BridgeError,
   type BrowserRequest,
   type NativeMessage,
+  operationClassFor,
   type PipeEvent,
   type PipeHelloAck,
   type PipeRequest,
@@ -43,6 +44,7 @@ class ChromeBridge {
   private readonly native = new NativeMessagingChannel();
   private readonly logger = new JsonlLogger();
   private readonly startedAt = new Date().toISOString();
+  private readonly instanceId = randomUUID();
   private readonly token = randomBytes(32).toString('base64url');
   private readonly pipeName = makePipeName();
   private readonly discoveryPath = makeDiscoveryPath();
@@ -50,6 +52,8 @@ class ChromeBridge {
   private readonly clients = new Set<Socket>();
   private server: Server | undefined;
   private extensionConnected = false;
+  private nativeReady = false;
+  private generation = 0;
   private lastExtensionMessageAt: string | undefined;
   private lastError: BridgeError | undefined;
 
@@ -64,8 +68,7 @@ class ChromeBridge {
     });
     this.server.listen(this.pipeName, () => {
       this.writeDiscovery();
-      this.extensionConnected = true;
-      this.broadcastStatus();
+      // A listening pipe is not evidence that the extension/native channel is ready.
       this.logger.write('info', 'bridge.started', {
         pipeName: this.pipeName,
         discoveryPath: this.discoveryPath,
@@ -96,6 +99,8 @@ class ChromeBridge {
 
   private handleNativeMessage(message: NativeMessage): void {
     this.extensionConnected = true;
+    if (!this.nativeReady) this.generation += 1;
+    this.nativeReady = true;
     this.lastExtensionMessageAt = new Date().toISOString();
     this.broadcastStatus();
     if (!isBrowserResponse(message)) {
@@ -123,6 +128,7 @@ class ChromeBridge {
 
   private handleNativeError(error: Error): void {
     this.extensionConnected = false;
+    this.nativeReady = false;
     const bridgeError = this.error('CONNECTION_CLOSED', `Chrome Native Messaging disconnected: ${error.message}`, true);
     this.recordError(bridgeError);
     for (const [requestId, request] of this.pending) {
@@ -135,6 +141,7 @@ class ChromeBridge {
 
   private acceptPipeClient(socket: Socket): void {
     let authenticated = false;
+    const sessionId = randomUUID();
     let lineBuffer = '';
     let helloTimer: NodeJS.Timeout | undefined = setTimeout(() => socket.destroy(), HELLO_TIMEOUT_MS);
     socket.setEncoding('utf8');
@@ -150,7 +157,7 @@ class ChromeBridge {
         const line = lineBuffer.slice(0, newline).trim();
         lineBuffer = lineBuffer.slice(newline + 1);
         if (!line) continue;
-        this.handlePipeLine(socket, line, authenticated, (isAuthenticated) => {
+        this.handlePipeLine(socket, line, authenticated, sessionId, (isAuthenticated) => {
           authenticated = isAuthenticated;
           if (isAuthenticated && helloTimer) {
             clearTimeout(helloTimer);
@@ -167,7 +174,7 @@ class ChromeBridge {
     socket.on('error', (error) => this.logger.write('debug', 'pipe.client_error', { message: error.message }));
   }
 
-  private handlePipeLine(socket: Socket, line: string, authenticated: boolean, setAuthenticated: (value: boolean) => void): void {
+  private handlePipeLine(socket: Socket, line: string, authenticated: boolean, sessionId: string, setAuthenticated: (value: boolean) => void): void {
     let message: unknown;
     try {
       message = JSON.parse(line);
@@ -190,7 +197,7 @@ class ChromeBridge {
         setAuthenticated(true);
         this.writePipe(socket, {
           id: rpcHello.id,
-          result: { accepted: true, protocolVersion: BRIDGE_PROTOCOL_VERSION, bridge: this.status() },
+          result: { accepted: true, protocolVersion: BRIDGE_PROTOCOL_VERSION, sessionId, bridge: this.status() },
         });
         this.logger.write('info', 'pipe.client_authenticated', { clientName });
         return;
@@ -224,10 +231,10 @@ class ChromeBridge {
       this.writePipe(socket, this.pipeError('__protocol__', 'INVALID_REQUEST', 'Unsupported Pipe message', false));
       return;
     }
-    void this.handlePipeRequest(socket, message);
+    void this.handlePipeRequest(socket, message, sessionId);
   }
 
-  private async handlePipeRequest(socket: Socket, request: PipeRequest): Promise<void> {
+  private async handlePipeRequest(socket: Socket, request: PipeRequest, authenticatedSessionId: string): Promise<void> {
     if (request.method === 'browser_connection_status') {
       this.writePipe(socket, { type: 'response', id: request.id, ok: true, result: this.status() } satisfies PipeResponse);
       return;
@@ -237,7 +244,7 @@ class ChromeBridge {
       return;
     }
     try {
-      const result = await this.forwardBrowserRequest(browserActionFromTool(request.method), request.params ?? {}, request.timeoutMs);
+      const result = await this.forwardBrowserRequest(request.id, authenticatedSessionId, browserActionFromTool(request.method), request.params ?? {}, request.timeoutMs, request.deadlineAt, request.operationClass);
       if (request.method === 'browser_screenshot') this.persistScreenshotArtifact(result, request.params?.artifactPath);
       this.writePipe(socket, { type: 'response', id: request.id, ok: true, result } satisfies PipeResponse);
     } catch (error) {
@@ -248,20 +255,22 @@ class ChromeBridge {
     }
   }
 
-  private forwardBrowserRequest(action: BrowserRequest['action'], params: Record<string, unknown>, requestedTimeout?: number): Promise<unknown> {
+  private forwardBrowserRequest(requestId: string, sessionId: string, action: BrowserRequest['action'], params: Record<string, unknown>, requestedTimeout?: number, requestedDeadline?: number, requestedClass?: BrowserRequest['operationClass']): Promise<unknown> {
     if (!this.extensionConnected) {
       return Promise.reject(this.error('BRIDGE_NOT_READY', 'Chrome Extension is not connected to the Bridge', true));
     }
-    const requestId = randomUUID();
     const timeoutMs = clampTimeout(requestedTimeout);
-    const request: BrowserRequest = { type: 'browser:request', requestId, action, params, timeoutMs };
+    const deadlineAt = Math.min(typeof requestedDeadline === 'number' ? requestedDeadline : Infinity, Date.now() + timeoutMs);
+    const remainingMs = Math.max(0, deadlineAt - Date.now());
+    const operationClass = requestedClass ?? operationClassFor(action);
+    const request: BrowserRequest = { type: 'browser:request', requestId, sessionId, action, params, timeoutMs, deadlineAt, operationClass };
     return new Promise<unknown>((resolve, reject) => {
       const timer = setTimeout(() => {
         if (!this.pending.delete(requestId)) return;
-        const timeout = this.error('REQUEST_TIMEOUT', `Browser action ${action} exceeded ${timeoutMs}ms`, true, { action, timeoutMs });
+        const timeout = this.error(operationClass === 'non_idempotent_write' ? 'UNKNOWN_OUTCOME' : 'REQUEST_TIMEOUT', `Browser action ${action} exceeded ${timeoutMs}ms`, operationClass === 'read', { action, timeoutMs, deadlineAt, operationClass });
         this.recordError(timeout);
         reject(timeout);
-      }, timeoutMs);
+      }, remainingMs);
       this.pending.set(requestId, { resolve, reject, timer, method: `browser_${action}`, startedAt: Date.now() });
       try {
         this.sendNative(request);
@@ -310,6 +319,9 @@ class ChromeBridge {
       pendingRequests: this.pending.size,
       lastExtensionMessageAt: this.lastExtensionMessageAt,
       lastError: this.lastError,
+      instanceId: this.instanceId,
+      generation: this.generation,
+      nativeReady: this.nativeReady,
     };
   }
 

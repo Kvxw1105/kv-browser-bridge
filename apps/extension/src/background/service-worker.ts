@@ -1,4 +1,4 @@
-import { getSelectedTabId, handleBrowserRequest, setSelectedTab, type BrowserResponse } from './browser-executor';
+import { clearSelectedTab, getSelectedTabId, handleBrowserRequest, setSelectedTab, type BrowserResponse } from './browser-executor';
 
 const HOST_NAME = 'io.kv.browser_bridge';
 const MAX_NATIVE_MESSAGE_BYTES = 480 * 1024;
@@ -6,6 +6,7 @@ const MAX_NATIVE_MESSAGE_BYTES = 480 * 1024;
 let nativePort: chrome.runtime.Port | null = null;
 let reconnectAttempt = 0;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 const panelPorts = new Set<chrome.runtime.Port>();
 
 function log(event: string, details: Record<string, unknown> = {}): void {
@@ -83,9 +84,9 @@ function connectBridge(): void {
     log('bridge_connected');
     broadcastToPanels({ type: '_native_status', connected: true });
 
-    port.onMessage.addListener((message: { type?: string; requestId?: string; action?: string; params?: Record<string, unknown>; domain?: string; paths?: string[] }) => {
+    port.onMessage.addListener((message: { type?: string; requestId?: string; action?: string; params?: Record<string, unknown>; sessionId?: string; deadlineAt?: number; operationClass?: 'read' | 'non_idempotent_write'; domain?: string; paths?: string[] }) => {
       if (message.type === 'browser:request' && typeof message.requestId === 'string' && typeof message.action === 'string') {
-        void handleBrowserRequest({ requestId: message.requestId, action: message.action, params: message.params }, connectionStatus)
+        void handleBrowserRequest({ requestId: message.requestId, action: message.action, params: message.params, sessionId: message.sessionId, deadlineAt: message.deadlineAt, operationClass: message.operationClass }, connectionStatus)
           .then(postBrowserResponse)
           .catch((error) => {
             const text = error instanceof Error ? error.message : String(error);
@@ -93,6 +94,7 @@ function connectBridge(): void {
           });
         return;
       }
+      if (message.type === 'ping') { try { postNative({ type: 'pong' }); } catch { /* reconnect handles it */ } return; }
       if (message.type === 'sources:set' && message.domain && message.paths) {
         chrome.storage.local.set({ [`ccb-sources-${message.domain}`]: message.paths });
       }
@@ -102,10 +104,15 @@ function connectBridge(): void {
       if (nativePort !== port) return;
       const error = chrome.runtime.lastError?.message ?? 'Chrome Bridge disconnected';
       nativePort = null;
+      if (heartbeatTimer) clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
       log('bridge_disconnected', { error });
       broadcastToPanels({ type: '_native_status', connected: false, error });
       scheduleReconnect();
     });
+    heartbeatTimer = setInterval(() => {
+      if (nativePort === port) { try { port.postMessage({ type: 'ping' }); } catch { /* disconnect handler reconnects */ } }
+    }, 15_000);
   } catch (error) {
     log('bridge_connect_failed', { error: error instanceof Error ? error.message : String(error) });
     scheduleReconnect();
@@ -157,10 +164,5 @@ chrome.action.onClicked.addListener((tab) => {
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
-  if (getSelectedTabId() === tabId) {
-    // The executor will fall back to the active tab for a later request.
-    chrome.tabs.query({ active: true, lastFocusedWindow: true }).then(([tab]) => {
-      if (tab?.id != null) setSelectedTab(tab.id);
-    }).catch(() => undefined);
-  }
+  clearSelectedTab(tabId);
 });

@@ -8,6 +8,9 @@ export type BrowserRequest = {
   requestId: string;
   action: string;
   params?: Record<string, unknown>;
+  sessionId?: string;
+  deadlineAt?: number;
+  operationClass?: 'read' | 'non_idempotent_write';
 };
 
 export type BrowserError = {
@@ -24,7 +27,9 @@ export type BrowserResponse = {
   error?: BrowserError;
 };
 
-let selectedTabId: number | null = null;
+const selectedTabs = new Map<string, number>();
+const PANEL_SESSION_ID = 'extension-sidepanel';
+const debuggerTabs = new Set<number>();
 
 class ToolError extends Error {
   constructor(
@@ -49,13 +54,22 @@ function numberParam(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isInteger(value) ? value : undefined;
 }
 
-export function setSelectedTab(tabId: number): void {
-  selectedTabId = tabId;
+export function setSelectedTab(tabId: number, sessionId = PANEL_SESSION_ID): void {
+  selectedTabs.set(sessionId, tabId);
 }
 
-export function getSelectedTabId(): number | null {
-  return selectedTabId;
+export function getSelectedTabId(sessionId = PANEL_SESSION_ID): number | null {
+  return selectedTabs.get(sessionId) ?? null;
 }
+
+export function clearSelectedTab(tabId?: number, sessionId?: string): void {
+  for (const [session, selected] of selectedTabs) {
+    if ((sessionId == null || session === sessionId) && (tabId == null || selected === tabId)) selectedTabs.delete(session);
+  }
+}
+
+function sessionFor(params: Record<string, unknown>): string { return typeof params.__sessionId === 'string' ? params.__sessionId : PANEL_SESSION_ID; }
+function selectFor(params: Record<string, unknown>, tabId: number): void { setSelectedTab(tabId, sessionFor(params)); }
 
 async function resolveTabId(params: Record<string, unknown>): Promise<number> {
   const requested = numberParam(params.tabId);
@@ -65,25 +79,29 @@ async function resolveTabId(params: Record<string, unknown>): Promise<number> {
     });
     return requested;
   }
+  const selectedTabId = getSelectedTabId(sessionFor(params));
   if (selectedTabId != null) {
     const tab = await chrome.tabs.get(selectedTabId).catch(() => undefined);
     if (tab) return selectedTabId;
-    selectedTabId = null;
+    clearSelectedTab(selectedTabId, sessionFor(params));
   }
   const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   if (active?.id == null) throw new ToolError('NO_TARGET_TAB', 'No browser tab is selected');
-  selectedTabId = active.id;
+  selectFor(params, active.id);
   return active.id;
 }
 
 async function ensureDebuggerAttached(tabId: number): Promise<void> {
+  if (debuggerTabs.has(tabId)) return;
   const targets = await new Promise<chrome.debugger.TargetInfo[]>((resolve) => chrome.debugger.getTargets(resolve));
-  if (targets.some((target) => target.tabId === tabId && target.attached)) return;
+  if (targets.some((target) => target.tabId === tabId && target.attached)) {
+    throw new ToolError('DEBUGGER_IN_USE', 'Another debugger is already attached to this tab', false, { tabId });
+  }
   await new Promise<void>((resolve, reject) => {
     chrome.debugger.attach({ tabId }, '1.3', () => {
       const error = chrome.runtime.lastError?.message;
-      if (error) reject(new ToolError('DEBUGGER_ATTACH_FAILED', error, true, { tabId }));
-      else resolve();
+      if (error) reject(new ToolError(/another debugger|already attached/i.test(error) ? 'DEBUGGER_IN_USE' : 'DEBUGGER_DETACHED', error, true, { tabId }));
+      else { debuggerTabs.add(tabId); resolve(); }
     });
   });
 }
@@ -92,11 +110,19 @@ function sendDebuggerCommand<T = unknown>(tabId: number, method: string, params?
   return new Promise((resolve, reject) => {
     chrome.debugger.sendCommand({ tabId }, method, params, (result) => {
       const error = chrome.runtime.lastError?.message;
-      if (error) reject(new ToolError('CDP_COMMAND_FAILED', error, true, { tabId, method }));
+      if (error) {
+        debuggerTabs.delete(tabId);
+        reject(new ToolError('DEBUGGER_DETACHED', error, true, { tabId, method }));
+      }
       else resolve(result as T);
     });
   });
 }
+
+chrome.debugger.onDetach.addListener((source, reason) => {
+  if (source.tabId != null) debuggerTabs.delete(source.tabId);
+});
+chrome.tabs.onRemoved.addListener((tabId) => debuggerTabs.delete(tabId));
 
 function locator(params: Record<string, unknown>): { selector: string; xpath: string } {
   const selector = typeof params.selector === 'string' ? params.selector : '';
@@ -157,7 +183,7 @@ async function waitForTabComplete(tabId: number, timeoutMs: number): Promise<voi
   });
 }
 
-async function getTabs(): Promise<unknown> {
+async function getTabs(params: Record<string, unknown>): Promise<unknown> {
   const tabs = await chrome.tabs.query({});
   return tabs.filter((tab) => tab.id != null).map((tab) => ({
     tabId: tab.id,
@@ -165,7 +191,7 @@ async function getTabs(): Promise<unknown> {
     title: tab.title ?? '',
     url: tab.url ?? '',
     active: Boolean(tab.active),
-    selected: tab.id === selectedTabId,
+    selected: tab.id === getSelectedTabId(sessionFor(params)),
   }));
 }
 
@@ -181,7 +207,7 @@ async function newTab(params: Record<string, unknown>): Promise<unknown> {
 
   const tab = await chrome.tabs.create({ windowId, url, active: params.activate !== false });
   if (tab.id == null) throw new ToolError('TAB_CREATE_FAILED', 'Chrome did not return a tab ID', true, { windowId, url });
-  selectedTabId = tab.id;
+  selectFor(params, tab.id);
   return {
     tabId: tab.id,
     windowId: tab.windowId,
@@ -201,7 +227,7 @@ async function switchTab(params: Record<string, unknown>): Promise<unknown> {
     await chrome.windows.update(tab.windowId, { focused: true });
     await chrome.tabs.update(tabId, { active: true });
   }
-  selectedTabId = tabId;
+  selectFor(params, tabId);
   return { tabId, title: tab.title ?? '', url: tab.url ?? '', active: params.activate !== false };
 }
 
@@ -224,7 +250,7 @@ async function closeTab(params: Record<string, unknown>): Promise<unknown> {
   await chrome.tabs.remove(tabId).catch((error: unknown) => {
     throw new ToolError('TAB_CLOSE_FAILED', error instanceof Error ? error.message : String(error), true, { tabId });
   });
-  if (selectedTabId === tabId) selectedTabId = null;
+  clearSelectedTab(tabId);
   return { closed: true, tabId, windowId: tab.windowId };
 }
 
@@ -427,7 +453,7 @@ async function openBookmark(params: Record<string, unknown>): Promise<unknown> {
   if (windowId == null) throw new ToolError('NO_TARGET_WINDOW', 'No existing Chrome window is available');
   const tab = await chrome.tabs.create({ windowId, url: bookmark.url, active: params.activate !== false });
   if (tab.id == null) throw new ToolError('TAB_CREATE_FAILED', 'Chrome did not return a tab ID', true, { windowId, bookmarkId });
-  selectedTabId = tab.id;
+  selectFor(params, tab.id);
   return { bookmarkId, tabId: tab.id, windowId: tab.windowId, title: tab.title ?? bookmark.title, url: tab.url ?? bookmark.url, active: params.activate !== false };
 }
 
@@ -726,14 +752,17 @@ async function getUrl(tabId: number): Promise<unknown> {
 }
 
 export async function handleBrowserRequest(request: BrowserRequest, connectionStatus: () => unknown): Promise<BrowserResponse> {
-  const params = request.params ?? {};
+  const params: Record<string, unknown> = { ...(request.params ?? {}), __sessionId: request.sessionId ?? PANEL_SESSION_ID };
   // Bridge implementations may forward either the compact protocol operation
   // name or the public MCP tool name. Keep the extension protocol tolerant of
   // both while preserving one internal dispatch table.
   const action = request.action.replace(/^browser_/, '');
   try {
     let result: unknown;
-    if (action === 'get_tabs') result = await getTabs();
+    if (typeof request.deadlineAt === 'number' && request.deadlineAt <= Date.now()) {
+      throw new ToolError(request.operationClass === 'non_idempotent_write' ? 'UNKNOWN_OUTCOME' : 'REQUEST_TIMEOUT', 'Request deadline expired before execution', request.operationClass === 'read', { deadlineAt: request.deadlineAt });
+    }
+    if (action === 'get_tabs') result = await getTabs(params);
     else if (action === 'new_tab') result = await newTab(params);
     else if (action === 'switch_tab') result = await switchTab(params);
     else if (action === 'close_tab') result = await closeTab(params);
@@ -743,6 +772,8 @@ export async function handleBrowserRequest(request: BrowserRequest, connectionSt
     else if (action === 'list_extensions') result = await listExtensions(params);
     else if (action === 'connection_status') result = connectionStatus();
     else {
+      const requiresExplicitTab = new Set(['navigate', 'scroll', 'click', 'type', 'press', 'select', 'evaluate', 'set_files']);
+      if (requiresExplicitTab.has(action) && numberParam(params.tabId) == null) throw new ToolError('EXPLICIT_TAB_ID_REQUIRED', `${action} requires an explicit tabId`, false);
       const tabId = await resolveTabId(params);
       switch (action) {
         case 'navigate': result = await navigate(tabId, params); break;
