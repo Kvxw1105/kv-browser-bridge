@@ -112,18 +112,6 @@ function connectBridge(): void {
   }
 }
 
-function configureSidePanel(tabId: number): void {
-  // Configure this outside the action-click gesture. Chrome then opens the
-  // panel itself when the user clicks the extension action.
-  void chrome.sidePanel.setOptions({ tabId, path: `sidepanel.html?tab=${tabId}`, enabled: true })
-    .catch((error) => {
-      log('sidepanel_configure_failed', {
-        tabId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    });
-}
-
 // Start a single bridge connection independently of side-panel lifetime.
 connectBridge();
 chrome.runtime.onStartup.addListener(connectBridge);
@@ -134,18 +122,14 @@ chrome.runtime.onInstalled.addListener(({ reason }) => {
     });
   }
   connectBridge();
-  void chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch((error) => {
+  void chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch((error) => {
     log('sidepanel_behavior_failed', { error: error instanceof Error ? error.message : String(error) });
   });
 });
 
-void chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch((error) => {
+void chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false }).catch((error) => {
   log('sidepanel_behavior_failed', { error: error instanceof Error ? error.message : String(error) });
 });
-
-void chrome.tabs.query({ active: true, lastFocusedWindow: true }).then(([tab]) => {
-  if (tab?.id != null) configureSidePanel(tab.id);
-}).catch(() => undefined);
 
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== 'sidepanel') return;
@@ -168,10 +152,16 @@ chrome.runtime.onConnect.addListener((port) => {
 chrome.action.onClicked.addListener((tab) => {
   if (tab.id == null) return;
   setSelectedTab(tab.id);
-  configureSidePanel(tab.id);
+  void chrome.tabs.create({
+    url: chrome.runtime.getURL(`sidepanel.html?tab=${tab.id}`),
+    active: true,
+  }).catch((error) => {
+    log('tool_tab_open_failed', {
+      tabId: tab.id,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
 });
-
-chrome.tabs.onActivated.addListener(({ tabId }) => configureSidePanel(tabId));
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   if (getSelectedTabId() === tabId) {
