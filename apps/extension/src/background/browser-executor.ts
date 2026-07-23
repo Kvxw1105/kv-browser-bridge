@@ -169,6 +169,28 @@ async function getTabs(): Promise<unknown> {
   }));
 }
 
+async function newTab(params: Record<string, unknown>): Promise<unknown> {
+  const url = typeof params.url === 'string' && params.url ? params.url : 'chrome://newtab/';
+  const requestedWindowId = numberParam(params.windowId);
+  let windowId = requestedWindowId;
+  if (windowId == null) {
+    const focused = await chrome.windows.getLastFocused();
+    windowId = focused.id;
+  }
+  if (windowId == null) throw new ToolError('NO_TARGET_WINDOW', 'No existing Chrome window is available');
+
+  const tab = await chrome.tabs.create({ windowId, url, active: params.activate !== false });
+  if (tab.id == null) throw new ToolError('TAB_CREATE_FAILED', 'Chrome did not return a tab ID', true, { windowId, url });
+  selectedTabId = tab.id;
+  return {
+    tabId: tab.id,
+    windowId: tab.windowId,
+    title: tab.title ?? '',
+    url: tab.url ?? url,
+    active: params.activate !== false,
+  };
+}
+
 async function switchTab(params: Record<string, unknown>): Promise<unknown> {
   const tabId = numberParam(params.tabId);
   if (tabId == null) throw new ToolError('INVALID_TAB_ID', 'tabId is required');
@@ -466,6 +488,7 @@ export async function handleBrowserRequest(request: BrowserRequest, connectionSt
   try {
     let result: unknown;
     if (action === 'get_tabs') result = await getTabs();
+    else if (action === 'new_tab') result = await newTab(params);
     else if (action === 'switch_tab') result = await switchTab(params);
     else if (action === 'connection_status') result = connectionStatus();
     else {

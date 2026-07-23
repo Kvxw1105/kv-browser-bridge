@@ -51,6 +51,12 @@ async function callBridge(method: string, params: Record<string, unknown> = {}, 
 
 server.tool('browser_get_tabs', 'List the tabs in the currently connected Chrome instance.', {}, async () => callBridge('browser_get_tabs'));
 
+server.tool('browser_new_tab', 'Create a tab in the existing Chrome window without launching a new browser process or profile.', {
+  url: z.string().url().optional().describe('Optional URL. Defaults to Chrome New Tab.'),
+  windowId: z.number().int().positive().optional().describe('Existing Chrome window ID. Defaults to the currently focused window.'),
+  activate: z.boolean().optional().describe('Whether the created tab should become active. Defaults to true.'),
+}, async (params) => callBridge('browser_new_tab', params));
+
 server.tool('browser_switch_tab', 'Select a tab as the default target for later browser tools.', {
   tabId: z.number().int().positive().describe('Chrome tab ID to select.'),
   activate: z.boolean().optional().describe('Whether Chrome should activate the selected tab.'),

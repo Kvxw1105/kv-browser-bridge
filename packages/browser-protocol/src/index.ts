@@ -10,6 +10,7 @@ export const PIPE_LINE_MAX_BYTES = 1024 * 1024;
 
 export type BrowserAction =
   | 'get_tabs'
+  | 'new_tab'
   | 'switch_tab'
   | 'navigate'
   | 'snapshot'
@@ -142,7 +143,7 @@ export function browserActionFromTool(method: BrowserToolName): BrowserAction {
 }
 
 export function isBrowserToolName(value: string): value is BrowserToolName {
-  return /^browser_(get_tabs|switch_tab|navigate|snapshot|screenshot|click|type|press|select|evaluate|set_files|wait_for|get_text|get_url)$/.test(value);
+  return /^browser_(get_tabs|new_tab|switch_tab|navigate|snapshot|screenshot|click|type|press|select|evaluate|set_files|wait_for|get_text|get_url)$/.test(value);
 }
 
 export function isNativeChunk(value: unknown): value is NativeChunk {
