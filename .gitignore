@@ -5,6 +5,7 @@ dist/
 .env
 .DS_Store
 .playwright-mcp/
+.worktrees/
 # Extension build artifacts (both old `-extension-` and newer `-vX.Y.Z` naming)
 claude-code-browser*.zip
 dist-web/
