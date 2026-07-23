@@ -78,7 +78,10 @@ Generic MCP client or Claude Code configuration example:
 ## What Kv Browser Bridge does not do
 
 - It does not provide a hosted/cloud service, telemetry service, or account.
-- It does not read or export Chrome cookies, profile data, or browser storage.
+- It does not automatically export Chrome cookies or Chrome profile data. The
+  extension uses `chrome.storage.local` for its own settings and UI state, and a
+  caller-provided `browser_evaluate` expression can read data available in the
+  selected page context; use that tool only with trusted clients and prompts.
 - It does not start another browser, clone a profile, or use Playwright.
 - It does not make the inactive legacy product path part of the Kv runtime.
 
