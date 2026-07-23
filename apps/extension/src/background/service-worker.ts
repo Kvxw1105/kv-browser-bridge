@@ -112,6 +112,18 @@ function connectBridge(): void {
   }
 }
 
+function configureSidePanel(tabId: number): void {
+  // Configure this outside the action-click gesture. Chrome then opens the
+  // panel itself when the user clicks the extension action.
+  void chrome.sidePanel.setOptions({ tabId, path: `sidepanel.html?tab=${tabId}`, enabled: true })
+    .catch((error) => {
+      log('sidepanel_configure_failed', {
+        tabId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+}
+
 // Start a single bridge connection independently of side-panel lifetime.
 connectBridge();
 chrome.runtime.onStartup.addListener(connectBridge);
@@ -122,7 +134,18 @@ chrome.runtime.onInstalled.addListener(({ reason }) => {
     });
   }
   connectBridge();
+  void chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch((error) => {
+    log('sidepanel_behavior_failed', { error: error instanceof Error ? error.message : String(error) });
+  });
 });
+
+void chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch((error) => {
+  log('sidepanel_behavior_failed', { error: error instanceof Error ? error.message : String(error) });
+});
+
+void chrome.tabs.query({ active: true, lastFocusedWindow: true }).then(([tab]) => {
+  if (tab?.id != null) configureSidePanel(tab.id);
+}).catch(() => undefined);
 
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== 'sidepanel') return;
@@ -142,21 +165,13 @@ chrome.runtime.onConnect.addListener((port) => {
   port.onDisconnect.addListener(() => panelPorts.delete(port));
 });
 
-chrome.action.onClicked.addListener(async (tab) => {
+chrome.action.onClicked.addListener((tab) => {
   if (tab.id == null) return;
   setSelectedTab(tab.id);
-  try {
-    await chrome.sidePanel.setOptions({ tabId: tab.id, path: `sidepanel.html?tab=${tab.id}`, enabled: true });
-    await chrome.sidePanel.open({ tabId: tab.id });
-  } catch (error) {
-    // The Side Panel is optional for the Bridge; a UI failure must not disrupt
-    // Native Messaging or background browser control.
-    log('sidepanel_open_failed', {
-      tabId: tab.id,
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
+  configureSidePanel(tab.id);
 });
+
+chrome.tabs.onActivated.addListener(({ tabId }) => configureSidePanel(tabId));
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   if (getSelectedTabId() === tabId) {

@@ -18,6 +18,9 @@
     "service_worker": "service-worker.js",
     "type": "module"
   },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
   "action": {
     "default_title": "Claude Code Browser"
   },
