@@ -25,3 +25,17 @@ test('extension dist validation rejects a missing required asset', async (t) => 
   await writeFile(join(directory, 'manifest.json'), JSON.stringify({ manifest_version: 3, background: { service_worker: 'service-worker.js' } }));
   await assert.rejects(validateExtensionDist(directory), /missing required file/);
 });
+
+test('extension dist validation rejects a missing content script asset', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'kv-extension-content-script-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const required = ['sidepanel.html', 'service-worker.js', 'content-script.js', 'element-picker.css', 'icon-16.png', 'icon-48.png', 'icon-128.png'];
+  await Promise.all(required.map((file) => writeFile(join(directory, file), '')));
+  await writeFile(join(directory, 'manifest.json'), JSON.stringify({
+    manifest_version: 3,
+    background: { service_worker: 'service-worker.js' },
+    icons: { 16: 'icon-16.png', 48: 'icon-48.png', 128: 'icon-128.png' },
+    content_scripts: [{ js: ['content-script.js', 'missing-content-script.js'], css: ['element-picker.css'] }],
+  }));
+  await assert.rejects(validateExtensionDist(directory), /content_scripts\[0\]\.js.*missing-content-script\.js/);
+});

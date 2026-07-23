@@ -76,6 +76,8 @@ Generic MCP client or Claude Code configuration example:
 }
 ```
 
+See the [MCP client compatibility matrix](docs/compatibility.md) for the supported configuration scopes and WorkBuddy's conditional status.
+
 ## Security boundaries
 
 - Chrome shows its debugging indicator when the `debugger` permission is active.
