@@ -62,6 +62,53 @@ server.tool('browser_switch_tab', 'Select a tab as the default target for later 
   activate: z.boolean().optional().describe('Whether Chrome should activate the selected tab.'),
 }, async (params) => callBridge('browser_switch_tab', params));
 
+server.tool('browser_scroll', 'Scroll the page or a located scrollable element by a bounded amount.', {
+  ...{ tabId },
+  ...locator,
+  direction: z.enum(['up', 'down', 'left', 'right']).optional(),
+  amount: z.number().int().min(1).max(10_000).optional(),
+  behavior: z.enum(['auto', 'smooth']).optional(),
+}, async (params) => callBridge('browser_scroll', params));
+
+server.tool('browser_find', 'Read-only search for visible page elements by text, role, CSS selector, or XPath.', {
+  ...{ tabId },
+  ...locator,
+  text: z.string().min(1).max(500).optional(),
+  role: z.string().min(1).max(100).optional(),
+  maxResults: z.number().int().min(1).max(100).optional(),
+}, async (params) => callBridge('browser_find', params));
+
+server.tool('browser_close_tab', 'Close one explicitly identified Chrome tab. Requires confirm=true and refuses pinned or last-window tabs by default.', {
+  tabId: z.number().int().positive().describe('Exact Chrome tab ID to close.'),
+  confirm: z.literal(true).describe('Must be true to acknowledge closing the specified tab.'),
+  allowPinned: z.boolean().optional().describe('Allow closing a pinned tab. Defaults to false.'),
+}, async (params) => callBridge('browser_close_tab', params));
+
+server.tool('browser_download_status', 'Read a bounded, privacy-sanitized view of recent Chrome download status. Does not open, erase, or accept downloads.', {
+  downloadId: z.number().int().positive().optional(),
+  state: z.enum(['in_progress', 'complete', 'interrupted']).optional(),
+  startedAfter: z.string().datetime().optional().describe('Optional ISO-8601 lower time bound.'),
+  limit: z.number().int().min(1).max(20).optional(),
+}, async (params) => callBridge('browser_download_status', params));
+
+server.tool('browser_list_bookmarks', 'Read or search Chrome bookmarks. Bookmark changes are intentionally not supported.', {
+  folderId: z.string().min(1).optional(),
+  query: z.string().min(1).max(500).optional(),
+  maxResults: z.number().int().min(1).max(500).optional(),
+  maxDepth: z.number().int().min(1).max(8).optional(),
+}, async (params) => callBridge('browser_list_bookmarks', params));
+
+server.tool('browser_open_bookmark', 'Open one HTTP(S) bookmark in a tab inside an existing Chrome window.', {
+  bookmarkId: z.string().min(1),
+  windowId: z.number().int().positive().optional(),
+  activate: z.boolean().optional(),
+}, async (params) => callBridge('browser_open_bookmark', params));
+
+server.tool('browser_list_extensions', 'Read installed Chrome extension metadata. Enabling, disabling, installing, and uninstalling extensions are intentionally not automated.', {
+  includeDisabled: z.boolean().optional(),
+  includePermissions: z.boolean().optional(),
+}, async (params) => callBridge('browser_list_extensions', params));
+
 server.tool('browser_navigate', 'Navigate a Chrome tab to a URL.', {
   ...{ tabId },
   url: z.string().url().describe('URL to open.'),

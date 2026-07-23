@@ -12,6 +12,13 @@ export type BrowserAction =
   | 'get_tabs'
   | 'new_tab'
   | 'switch_tab'
+  | 'scroll'
+  | 'find'
+  | 'close_tab'
+  | 'download_status'
+  | 'list_bookmarks'
+  | 'open_bookmark'
+  | 'list_extensions'
   | 'navigate'
   | 'snapshot'
   | 'screenshot'
@@ -143,7 +150,7 @@ export function browserActionFromTool(method: BrowserToolName): BrowserAction {
 }
 
 export function isBrowserToolName(value: string): value is BrowserToolName {
-  return /^browser_(get_tabs|new_tab|switch_tab|navigate|snapshot|screenshot|click|type|press|select|evaluate|set_files|wait_for|get_text|get_url)$/.test(value);
+  return /^browser_(get_tabs|new_tab|switch_tab|scroll|find|close_tab|download_status|list_bookmarks|open_bookmark|list_extensions|navigate|snapshot|screenshot|click|type|press|select|evaluate|set_files|wait_for|get_text|get_url)$/.test(value);
 }
 
 export function isNativeChunk(value: unknown): value is NativeChunk {

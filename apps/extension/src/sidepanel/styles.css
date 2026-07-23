@@ -1454,6 +1454,28 @@ body {
 .local-bridge-panel__details dt { color: #a1a1aa; }
 .local-bridge-panel__details dd { margin: 0; overflow-wrap: anywhere; }
 
+.local-bridge-panel__permissions { margin-top: 24px; }
+
+.local-bridge-panel__permission {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 0;
+  border-bottom: 1px solid #27272a;
+  color: #d4d4d8;
+}
+
+.local-bridge-panel__permission button {
+  border: 1px solid #52525b;
+  border-radius: 4px;
+  padding: 4px 8px;
+  color: #f4f4f5;
+  background: #27272a;
+  cursor: pointer;
+}
+
+.local-bridge-panel__granted { color: #86efac; font-size: 13px; }
+
 /* ── Review Prompt Banner ───────────────────────────────────────────────── */
 
 .review-prompt {

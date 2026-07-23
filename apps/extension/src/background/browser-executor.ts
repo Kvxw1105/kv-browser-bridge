@@ -205,6 +205,29 @@ async function switchTab(params: Record<string, unknown>): Promise<unknown> {
   return { tabId, title: tab.title ?? '', url: tab.url ?? '', active: params.activate !== false };
 }
 
+async function closeTab(params: Record<string, unknown>): Promise<unknown> {
+  // Closing a tab is irreversible.  Do not infer the target from the currently
+  // selected tab: callers must name it and opt in explicitly.
+  const tabId = numberParam(params.tabId);
+  if (tabId == null) throw new ToolError('INVALID_TAB_ID', 'tabId is required to close a tab');
+  if (params.confirm !== true) throw new ToolError('CLOSE_CONFIRMATION_REQUIRED', 'confirm must be true to close a tab');
+  const tab = await chrome.tabs.get(tabId).catch(() => {
+    throw new ToolError('TAB_NOT_FOUND', `Tab ${tabId} no longer exists`, false, { tabId });
+  });
+  if (tab.pinned && params.allowPinned !== true) {
+    throw new ToolError('PINNED_TAB_CLOSE_BLOCKED', 'Refusing to close a pinned tab without allowPinned: true', false, { tabId });
+  }
+  const windowTabs = await chrome.tabs.query({ windowId: tab.windowId });
+  if (windowTabs.length <= 1) {
+    throw new ToolError('LAST_TAB_CLOSE_BLOCKED', 'Refusing to close the last tab in a Chrome window', false, { tabId, windowId: tab.windowId });
+  }
+  await chrome.tabs.remove(tabId).catch((error: unknown) => {
+    throw new ToolError('TAB_CLOSE_FAILED', error instanceof Error ? error.message : String(error), true, { tabId });
+  });
+  if (selectedTabId === tabId) selectedTabId = null;
+  return { closed: true, tabId, windowId: tab.windowId };
+}
+
 async function navigate(tabId: number, params: Record<string, unknown>): Promise<unknown> {
   const url = typeof params.url === 'string' ? params.url : '';
   if (!url) throw new ToolError('INVALID_URL', 'url is required');
@@ -215,6 +238,220 @@ async function navigate(tabId: number, params: Record<string, unknown>): Promise
   await loaded;
   const tab = await chrome.tabs.get(tabId);
   return { tabId, title: tab.title ?? '', url: tab.url ?? '' };
+}
+
+async function scroll(tabId: number, params: Record<string, unknown>): Promise<unknown> {
+  const selector = typeof params.selector === 'string' ? params.selector : '';
+  const xpath = typeof params.xpath === 'string' ? params.xpath : '';
+  const direction = typeof params.direction === 'string' ? params.direction : 'down';
+  if (!['up', 'down', 'left', 'right'].includes(direction)) {
+    throw new ToolError('INVALID_SCROLL_DIRECTION', 'direction must be up, down, left, or right');
+  }
+  const amount = Math.max(1, Math.min(numberParam(params.amount) ?? numberParam(params.pixels) ?? 600, 10_000));
+  const behavior = params.behavior === 'smooth' ? 'smooth' : 'auto';
+  const result = await executeInPage<{ error?: string; target?: string; before?: { x: number; y: number }; after?: { x: number; y: number } }>(tabId, (css: string, path: string, requestedDirection: string, pixels: number, requestedBehavior: ScrollBehavior) => {
+    let element: Element | null = null;
+    if (css) { try { element = document.querySelector(css); } catch { return { error: 'Invalid CSS selector' }; } }
+    if (!element && path) { try { element = document.evaluate(path, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue as Element | null; } catch { return { error: 'Invalid XPath' }; } }
+    if ((css || path) && !element) return { error: 'Element not found' };
+    const horizontal = requestedDirection === 'left' || requestedDirection === 'right';
+    const signedAmount = (requestedDirection === 'up' || requestedDirection === 'left') ? -pixels : pixels;
+    if (element instanceof HTMLElement) {
+      const before = { x: element.scrollLeft, y: element.scrollTop };
+      element.scrollBy(horizontal ? { left: signedAmount, behavior: requestedBehavior } : { top: signedAmount, behavior: requestedBehavior });
+      return { target: 'element', before, after: { x: element.scrollLeft, y: element.scrollTop } };
+    }
+    const before = { x: window.scrollX, y: window.scrollY };
+    window.scrollBy(horizontal ? { left: signedAmount, behavior: requestedBehavior } : { top: signedAmount, behavior: requestedBehavior });
+    return { target: 'window', before, after: { x: window.scrollX, y: window.scrollY } };
+  }, [selector, xpath, direction, amount, behavior]);
+  if (result.error) throw new ToolError('SCROLL_FAILED', result.error, false, { selector, xpath });
+  return { scrolled: true, direction, amount, behavior, ...result };
+}
+
+async function find(tabId: number, params: Record<string, unknown>): Promise<unknown> {
+  const selector = typeof params.selector === 'string' ? params.selector : '';
+  const xpath = typeof params.xpath === 'string' ? params.xpath : '';
+  const text = typeof params.text === 'string' ? params.text.trim() : '';
+  const role = typeof params.role === 'string' ? params.role.trim() : '';
+  if (!selector && !xpath && !text && !role) {
+    throw new ToolError('INVALID_FIND_QUERY', 'text, role, selector, or xpath is required');
+  }
+  const maxResults = Math.max(1, Math.min(numberParam(params.maxResults) ?? 20, 100));
+  const result = await executeInPage<{ error?: string; matches?: Array<Record<string, unknown>>; scanned?: number; truncated?: boolean }>(tabId, (css: string, path: string, containsText: string, requestedRole: string, max: number) => {
+    let candidates: Element[] = [];
+    if (css) {
+      try { candidates = Array.from(document.querySelectorAll(css)); } catch { return { error: 'Invalid CSS selector' }; }
+    } else if (path) {
+      try {
+        const snapshot = document.evaluate(path, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+        candidates = Array.from({ length: snapshot.snapshotLength }, (_, index) => snapshot.snapshotItem(index)).filter((element): element is Element => element instanceof Element);
+      } catch { return { error: 'Invalid XPath' }; }
+    } else {
+      candidates = Array.from(document.querySelectorAll('body *'));
+    }
+    const limited = candidates.slice(0, 5_000);
+    const wantedText = containsText.toLocaleLowerCase();
+    const wantedRole = requestedRole.toLocaleLowerCase();
+    const matches: Array<Record<string, unknown>> = [];
+    for (const element of limited) {
+      const computed = getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      const visible = computed.display !== 'none' && computed.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+      const accessibleRole = (element.getAttribute('role') ?? '').toLocaleLowerCase();
+      const elementText = (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)
+        ? '' : ((element as HTMLElement).innerText || element.textContent || '').replace(/\s+/g, ' ').trim();
+      if (wantedText && !elementText.toLocaleLowerCase().includes(wantedText)) continue;
+      if (wantedRole && accessibleRole !== wantedRole) continue;
+      matches.push({
+        tag: element.tagName.toLocaleLowerCase(),
+        id: element.id || undefined,
+        role: element.getAttribute('role') || undefined,
+        ariaLabel: element.getAttribute('aria-label') || undefined,
+        text: elementText.slice(0, 200),
+        visible,
+      });
+      if (matches.length >= max) break;
+    }
+    return { matches, scanned: limited.length, truncated: candidates.length > limited.length || matches.length >= max };
+  }, [selector, xpath, text, role, maxResults]);
+  if (result.error) throw new ToolError('FIND_FAILED', result.error, false, { selector, xpath });
+  return { tabId, matches: result.matches ?? [], scanned: result.scanned ?? 0, truncated: Boolean(result.truncated) };
+}
+
+async function requireOptionalPermission(permission: string, action: string): Promise<void> {
+  const granted = await chrome.permissions.contains({ permissions: [permission] });
+  if (!granted) {
+    throw new ToolError('PERMISSION_REQUIRED', `${action} requires the optional Chrome permission: ${permission}`, false, { permission, action });
+  }
+}
+
+function filenameBasename(filename: string): string {
+  return filename.split(/[\\/]/).filter(Boolean).pop() ?? '';
+}
+
+async function downloadStatus(params: Record<string, unknown>): Promise<unknown> {
+  await requireOptionalPermission('downloads', 'browser_download_status');
+  const id = numberParam(params.downloadId);
+  const limit = Math.max(1, Math.min(numberParam(params.limit) ?? 10, 20));
+  const startedAfter = typeof params.startedAfter === 'string' ? params.startedAfter : undefined;
+  if (startedAfter && Number.isNaN(Date.parse(startedAfter))) {
+    throw new ToolError('INVALID_STARTED_AFTER', 'startedAfter must be an ISO-8601 timestamp');
+  }
+  const query: chrome.downloads.DownloadQuery = {
+    orderBy: ['-startTime'],
+    id,
+    state: typeof params.state === 'string' ? params.state : undefined,
+    startedAfter: startedAfter ?? (id == null ? new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString() : undefined),
+  };
+  const downloads = await chrome.downloads.search(query).catch((error: unknown) => {
+    throw new ToolError('DOWNLOAD_QUERY_FAILED', error instanceof Error ? error.message : String(error), true);
+  });
+  const items = downloads.slice(0, limit).map((item) => ({
+    id: item.id,
+    state: item.state,
+    paused: item.paused,
+    canResume: item.canResume,
+    bytesReceived: item.bytesReceived,
+    totalBytes: item.totalBytes,
+    percentComplete: item.totalBytes > 0 ? Math.min(100, Math.floor((item.bytesReceived / item.totalBytes) * 100)) : null,
+    startTime: item.startTime,
+    endTime: item.endTime,
+    estimatedEndTime: item.estimatedEndTime,
+    danger: item.danger,
+    interruptReason: item.error ?? null,
+    exists: item.exists,
+    mime: item.mime,
+    fileSize: item.fileSize,
+    filename: filenameBasename(item.filename),
+  }));
+  if (id != null && !items.length) throw new ToolError('DOWNLOAD_NOT_FOUND', `Download ${id} was not found`, false, { downloadId: id });
+  return { downloads: items, limitedTo: limit, historyWindow: id == null ? { startedAfter: query.startedAfter } : undefined };
+}
+
+type BookmarkResult = {
+  id: string;
+  parentId?: string;
+  index?: number;
+  title: string;
+  url?: string;
+  folder: boolean;
+  unmodifiable?: string;
+};
+
+function flattenBookmarks(nodes: chrome.bookmarks.BookmarkTreeNode[], depth: number, maxDepth: number, output: BookmarkResult[]): void {
+  for (const node of nodes) {
+    output.push({
+      id: node.id,
+      parentId: node.parentId,
+      index: node.index,
+      title: node.title,
+      url: node.url,
+      folder: !node.url,
+      unmodifiable: node.unmodifiable,
+    });
+    if (node.children && depth < maxDepth) flattenBookmarks(node.children, depth + 1, maxDepth, output);
+  }
+}
+
+async function listBookmarks(params: Record<string, unknown>): Promise<unknown> {
+  await requireOptionalPermission('bookmarks', 'browser_list_bookmarks');
+  const maxResults = Math.max(1, Math.min(numberParam(params.maxResults) ?? 100, 500));
+  const query = typeof params.query === 'string' ? params.query.trim() : '';
+  if (query) {
+    const matches = await chrome.bookmarks.search(query);
+    return { bookmarks: matches.slice(0, maxResults).map((node) => ({ id: node.id, parentId: node.parentId, index: node.index, title: node.title, url: node.url, folder: !node.url, unmodifiable: node.unmodifiable })), truncated: matches.length > maxResults };
+  }
+  const folderId = typeof params.folderId === 'string' ? params.folderId : '';
+  const maxDepth = Math.max(1, Math.min(numberParam(params.maxDepth) ?? 3, 8));
+  const roots = folderId ? await chrome.bookmarks.getSubTree(folderId) : await chrome.bookmarks.getTree();
+  if (folderId && !roots.length) throw new ToolError('BOOKMARK_FOLDER_NOT_FOUND', `Bookmark folder ${folderId} was not found`, false, { folderId });
+  const bookmarks: BookmarkResult[] = [];
+  flattenBookmarks(roots, 0, maxDepth, bookmarks);
+  return { bookmarks: bookmarks.slice(0, maxResults), truncated: bookmarks.length > maxResults, maxDepth };
+}
+
+async function openBookmark(params: Record<string, unknown>): Promise<unknown> {
+  await requireOptionalPermission('bookmarks', 'browser_open_bookmark');
+  const bookmarkId = typeof params.bookmarkId === 'string' ? params.bookmarkId : '';
+  if (!bookmarkId) throw new ToolError('INVALID_BOOKMARK_ID', 'bookmarkId is required');
+  const [bookmark] = await chrome.bookmarks.get(bookmarkId);
+  if (!bookmark?.url) throw new ToolError('BOOKMARK_NOT_OPENABLE', 'The selected bookmark is a folder or has no URL', false, { bookmarkId });
+  let parsed: URL;
+  try { parsed = new URL(bookmark.url); } catch { throw new ToolError('INVALID_BOOKMARK_URL', 'Bookmark URL is invalid', false, { bookmarkId }); }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new ToolError('BOOKMARK_SCHEME_BLOCKED', 'Only HTTP(S) bookmarks may be opened through this tool', false, { bookmarkId, protocol: parsed.protocol });
+  }
+  const requestedWindowId = numberParam(params.windowId);
+  const windowId = requestedWindowId ?? (await chrome.windows.getLastFocused()).id;
+  if (windowId == null) throw new ToolError('NO_TARGET_WINDOW', 'No existing Chrome window is available');
+  const tab = await chrome.tabs.create({ windowId, url: bookmark.url, active: params.activate !== false });
+  if (tab.id == null) throw new ToolError('TAB_CREATE_FAILED', 'Chrome did not return a tab ID', true, { windowId, bookmarkId });
+  selectedTabId = tab.id;
+  return { bookmarkId, tabId: tab.id, windowId: tab.windowId, title: tab.title ?? bookmark.title, url: tab.url ?? bookmark.url, active: params.activate !== false };
+}
+
+async function listExtensions(params: Record<string, unknown>): Promise<unknown> {
+  await requireOptionalPermission('management', 'browser_list_extensions');
+  const includeDisabled = params.includeDisabled !== false;
+  const includePermissions = params.includePermissions === true;
+  const extensions = await chrome.management.getAll();
+  return {
+    extensions: extensions
+      .filter((extension) => includeDisabled || extension.enabled)
+      .map((extension) => ({
+        id: extension.id,
+        name: extension.name,
+        version: extension.version,
+        type: extension.type,
+        enabled: extension.enabled,
+        installType: extension.installType,
+        mayDisable: extension.mayDisable,
+        disabledReason: extension.disabledReason,
+        ...(includePermissions ? { permissions: extension.permissions, hostPermissions: extension.hostPermissions } : {}),
+      })),
+    extensionStateChanges: 'not_automated_requires_user_gesture',
+  };
 }
 
 async function snapshot(tabId: number, params: Record<string, unknown>): Promise<unknown> {
@@ -490,11 +727,18 @@ export async function handleBrowserRequest(request: BrowserRequest, connectionSt
     if (action === 'get_tabs') result = await getTabs();
     else if (action === 'new_tab') result = await newTab(params);
     else if (action === 'switch_tab') result = await switchTab(params);
+    else if (action === 'close_tab') result = await closeTab(params);
+    else if (action === 'download_status') result = await downloadStatus(params);
+    else if (action === 'list_bookmarks') result = await listBookmarks(params);
+    else if (action === 'open_bookmark') result = await openBookmark(params);
+    else if (action === 'list_extensions') result = await listExtensions(params);
     else if (action === 'connection_status') result = connectionStatus();
     else {
       const tabId = await resolveTabId(params);
       switch (action) {
         case 'navigate': result = await navigate(tabId, params); break;
+        case 'scroll': result = await scroll(tabId, params); break;
+        case 'find': result = await find(tabId, params); break;
         case 'snapshot': result = await snapshot(tabId, params); break;
         case 'screenshot': result = await screenshot(tabId); break;
         case 'click': result = await click(tabId, params); break;

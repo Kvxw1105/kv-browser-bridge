@@ -6,6 +6,7 @@ type BridgeState = 'connecting' | 'connected' | 'disconnected';
 export function LocalBridgePanel() {
   const [state, setState] = useState<BridgeState>('connecting');
   const [target, setTarget] = useState('');
+  const [grantedPermissions, setGrantedPermissions] = useState<string[]>([]);
 
   useEffect(() => {
     if (MY_TAB_ID != null) {
@@ -15,6 +16,7 @@ export function LocalBridgePanel() {
     }
 
     const port = chrome.runtime.connect({ name: 'sidepanel' });
+    void chrome.permissions.getAll().then((permissions) => setGrantedPermissions(permissions.permissions ?? []));
     if (MY_TAB_ID != null) port.postMessage({ type: '_panel_init', tabId: MY_TAB_ID });
     port.onMessage.addListener((message: { type?: string; connected?: boolean }) => {
       if (message.type === '_native_status') {
@@ -26,6 +28,10 @@ export function LocalBridgePanel() {
   }, []);
 
   const label = state === 'connected' ? 'Connected' : state === 'connecting' ? 'Connecting' : 'Disconnected';
+  const requestPermission = async (permission: string) => {
+    const granted = await chrome.permissions.request({ permissions: [permission] });
+    if (granted) setGrantedPermissions((current) => [...new Set([...current, permission])]);
+  };
 
   return (
     <main className="local-bridge-panel">
@@ -38,6 +44,16 @@ export function LocalBridgePanel() {
         <div><dt>MCP</dt><dd>local-chrome</dd></div>
         <div><dt>Target</dt><dd>{target || (MY_TAB_ID == null ? 'No target tab' : `Tab ${MY_TAB_ID}`)}</dd></div>
       </dl>
+      <section className="local-bridge-panel__permissions" aria-label="Optional browser access">
+        {['bookmarks', 'downloads', 'management'].map((permission) => (
+          <div key={permission} className="local-bridge-panel__permission">
+            <span>{permission}</span>
+            {grantedPermissions.includes(permission)
+              ? <span className="local-bridge-panel__granted">Granted</span>
+              : <button onClick={() => void requestPermission(permission)}>Grant</button>}
+          </div>
+        ))}
+      </section>
     </main>
   );
 }

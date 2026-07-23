@@ -28,6 +28,8 @@ The MCP process uses only its own stdin/stdout. The Chrome Bridge owns Native Me
 
 - Open the extension once in the Chrome tab you want to control, or call `browser_switch_tab` after `browser_get_tabs`.
 - `browser_new_tab` creates a tab inside an existing Chrome window; it never starts a second Chrome process or profile.
+- `browser_scroll`, `browser_find`, and `browser_close_tab` support dynamic list pages. Closing requires both an exact tab ID and `confirm: true`; pinned and last-window tabs are blocked by default.
+- The extension requests bookmark, download-status, and extension-inventory access only as optional permissions from its Local Chrome page. Download output excludes local paths and source URLs. Extension inventory is read-only because Chrome requires a real user gesture for enable/disable changes.
 - `browser_set_files` validates absolute paths and uses CDP `DOM.setFileInputFiles`; it never uses Windows file-picker coordinates.
 - `browser_click` blocks controls whose accessible text looks like final Publish/Post/Submit controls. Do not bypass this policy with `browser_evaluate`.
 - `browser_evaluate` is sent with CDP `throwOnSideEffect: true`; operations Chrome considers effectful are rejected.
