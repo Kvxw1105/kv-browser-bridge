@@ -142,6 +142,7 @@ server.tool('browser_screenshot', 'Capture a PNG screenshot from an existing Chr
 server.tool('browser_click', 'Click one element using exactly one CSS selector or XPath.', {
   ...{ tabId },
   ...locator,
+  allowCommentSend: z.literal(true).optional().describe('Allow only a comment-composer button whose exact text is 发送. Final publish controls remain blocked.'),
   timeoutMs: z.number().int().positive().max(120_000).optional(),
 }, async ({ timeoutMs, ...params }) => callBridge('browser_click', params, timeoutMs));
 

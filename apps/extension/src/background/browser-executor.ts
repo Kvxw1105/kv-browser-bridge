@@ -534,7 +534,8 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string)
 
 async function click(tabId: number, params: Record<string, unknown>): Promise<unknown> {
   const { selector, xpath } = locator(params);
-  const result = await executeInPage<{ error?: string; blocked?: boolean; tag?: string; text?: string }>(tabId, (css: string, path: string) => {
+  const allowCommentSend = params.allowCommentSend === true;
+  const result = await executeInPage<{ error?: string; blocked?: boolean; tag?: string; text?: string }>(tabId, (css: string, path: string, allowCommentSendControl: boolean) => {
     let element: Element | null = null;
     if (css) { try { element = document.querySelector(css); } catch { /* try XPath */ } }
     if (!element && path) { try { element = document.evaluate(path, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue as Element | null; } catch { /* invalid XPath */ } }
@@ -543,11 +544,19 @@ async function click(tabId: number, params: Record<string, unknown>): Promise<un
       .filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
     const explicitSafe = /\b(save draft|draft|preview|cancel|back)\b|草稿|预览|取消|返回/i.test(text);
     const finalPublish = /\b(publish|post|submit|release|send)\b|发布|提交|上线|发送/i.test(text);
-    if (finalPublish && !explicitSafe) return { blocked: true, text: text.slice(0, 160) };
+    const commentComposerContainsButton = Array.from(document.querySelectorAll('[contenteditable="true"]')).some((editor) => {
+      let ancestor: Element | null = editor.parentElement;
+      for (let depth = 0; ancestor && depth < 5; depth += 1, ancestor = ancestor.parentElement) {
+        if (ancestor.contains(element)) return true;
+      }
+      return false;
+    });
+    const approvedCommentSend = allowCommentSendControl && text === '发送' && commentComposerContainsButton;
+    if (finalPublish && !explicitSafe && !approvedCommentSend) return { blocked: true, text: text.slice(0, 160) };
     (element as HTMLElement).scrollIntoView({ block: 'center', inline: 'center' });
     (element as HTMLElement).click();
     return { tag: element.tagName.toLowerCase(), text: (element.textContent ?? '').trim().slice(0, 160) };
-  }, [selector, xpath]);
+  }, [selector, xpath, allowCommentSend]);
   if (result.blocked) throw new ToolError('PREPUBLISH_BLOCKED', 'Clicking a final publish or submit control is disabled', false, { text: result.text });
   if (result.error) throw new ToolError('ELEMENT_NOT_FOUND', result.error, false, { selector, xpath });
   return { clicked: true, ...result };

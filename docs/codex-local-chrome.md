@@ -32,6 +32,7 @@ The MCP process uses only its own stdin/stdout. The Chrome Bridge owns Native Me
 - The extension requests bookmark, download-status, and extension-inventory access only as optional permissions from its Local Chrome page. Download output excludes local paths and source URLs. Extension inventory is read-only because Chrome requires a real user gesture for enable/disable changes.
 - `browser_set_files` validates absolute paths and uses CDP `DOM.setFileInputFiles`; it never uses Windows file-picker coordinates.
 - `browser_click` blocks controls whose accessible text looks like final Publish/Post/Submit controls. Do not bypass this policy with `browser_evaluate`.
+- A comment composer can send only when `browser_click` is called with `allowCommentSend: true`; the target must have exact text `发送` and share a near ancestor with a contenteditable comment input. This exception never applies to a final work-publish control.
 - `browser_evaluate` is sent with CDP `throwOnSideEffect: true`; operations Chrome considers effectful are rejected.
 - Request screenshots with an `artifactPath` to persist audit evidence, for example `D:\artifacts\run-1\before-publish.png`.
 
