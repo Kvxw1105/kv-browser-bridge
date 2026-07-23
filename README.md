@@ -44,6 +44,15 @@ To remove the registration:
 npm run uninstall-local-chrome
 ```
 
+To inspect the local installation without changing Chrome, the registry, or discovery configuration:
+
+```powershell
+npm run doctor-local-chrome
+# or: node apps/chrome-bridge/dist/install.js doctor --json
+```
+
+The command exits nonzero when a required check fails and emits structured JSON for automation. See [Windows installation diagnostics](docs/release/windows-install.md) for the checks and repair steps.
+
 ## MCP configuration examples
 
 Build before configuring a client. The MCP server is stdio-only; it connects to the locally running Kv host using discovery metadata in `%LOCALAPPDATA%\KvBrowserBridge\bridge.json`.

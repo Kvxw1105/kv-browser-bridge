@@ -66,6 +66,21 @@ function readJson(fs: InstallerFs, path: string): unknown | undefined {
   try { return JSON.parse(fs.readFileSync(path, 'utf8')); } catch { return undefined; }
 }
 
+function artifactContents(fs: InstallerFs, path: string): string | undefined {
+  return fs.existsSync(path) ? fs.readFileSync(path, 'utf8') : undefined;
+}
+
+function requireManagedPriorArtifact(path: string, contents: string | undefined, owned: boolean): void {
+  if (contents !== undefined && !owned) throw new Error(`Refusing to overwrite a non-Kv artifact: ${path}`);
+}
+
+function restoreArtifact(fs: InstallerFs, path: string, previous: string | undefined, expectedCurrent: string): void {
+  // Do not clobber a file another process changed after our write.
+  if (artifactContents(fs, path) !== expectedCurrent) return;
+  if (previous === undefined) fs.rmSync(path, { force: true });
+  else atomicWriteFile(fs, path, previous);
+}
+
 function registryValue(result: RegistryResult): string | undefined {
   if (result.status !== 0) return undefined;
   const line = result.stdout.split(/\r?\n/).find((item) => /REG_SZ/i.test(item));
@@ -95,15 +110,25 @@ export function install(extensionId: string, deps: { fs?: InstallerFs; runner?: 
   if (!isAbsolute(paths.bridge) || !fs.existsSync(paths.bridge)) throw new Error(`Bridge build is missing: ${paths.bridge}`);
   const wrapper = createKvWrapper(paths.bridge, deps.nodePath ?? process.execPath);
   const manifest = createNativeHostManifest(extensionId, paths.wrapper);
+  const manifestContents = `${JSON.stringify(manifest, null, 2)}\n`;
+  const previousWrapper = artifactContents(fs, paths.wrapper);
+  const previousManifest = artifactContents(fs, paths.manifest);
+  requireManagedPriorArtifact(paths.wrapper, previousWrapper, previousWrapper === undefined || isKvOwnedWrapper(previousWrapper));
+  requireManagedPriorArtifact(paths.manifest, previousManifest, previousManifest === undefined || isKvOwnedManifest(readJson(fs, paths.manifest)));
   fs.mkdirSync(dirname(paths.manifest), { recursive: true });
-  atomicWriteFile(fs, paths.wrapper, wrapper);
-  atomicWriteFile(fs, paths.manifest, `${JSON.stringify(manifest, null, 2)}\n`);
-  requireRegistry(runner, 'add', ['add', registryKey, '/ve', '/t', 'REG_SZ', '/d', paths.manifest, '/f']);
-  const writtenManifest = readJson(fs, paths.manifest);
-  const writtenWrapper = fs.existsSync(paths.wrapper) ? fs.readFileSync(paths.wrapper, 'utf8') : '';
-  const registeredPath = registryValue(requireRegistry(runner, 'verification query', ['query', registryKey, '/ve']));
-  if (!isKvOwnedManifest(writtenManifest, paths.wrapper) || !isKvOwnedWrapper(writtenWrapper) || registeredPath !== paths.manifest) {
-    throw new Error('Installation consistency verification failed: manifest, wrapper, and HKCU registration must agree.');
+  try {
+    atomicWriteFile(fs, paths.wrapper, wrapper);
+    if (artifactContents(fs, paths.wrapper) !== wrapper) throw new Error('Wrapper changed while installation was in progress.');
+    atomicWriteFile(fs, paths.manifest, manifestContents);
+    requireRegistry(runner, 'add', ['add', registryKey, '/ve', '/t', 'REG_SZ', '/d', paths.manifest, '/f']);
+    const registeredPath = registryValue(requireRegistry(runner, 'verification query', ['query', registryKey, '/ve']));
+    if (artifactContents(fs, paths.manifest) !== manifestContents || artifactContents(fs, paths.wrapper) !== wrapper || registeredPath !== paths.manifest) {
+      throw new Error('Installation consistency verification failed: exact manifest, wrapper, and HKCU registration must agree.');
+    }
+  } catch (error) {
+    restoreArtifact(fs, paths.manifest, previousManifest, manifestContents);
+    restoreArtifact(fs, paths.wrapper, previousWrapper, wrapper);
+    throw error;
   }
   tryApplyWindowsAcl();
 }
@@ -119,7 +144,7 @@ export function uninstall(deps: { fs?: InstallerFs; runner?: RegistryRunner; app
   const registeredPath = registryValue(query);
   const ownedManifest = isKvOwnedManifest(manifest, paths.wrapper);
   const ownedWrapper = isKvOwnedWrapper(wrapper);
-  if (registeredPath === paths.manifest && (ownedManifest || ownedWrapper)) {
+  if (registeredPath === paths.manifest && ownedManifest) {
     requireRegistry(runner, 'delete', ['delete', registryKey, '/f']);
   }
   if (ownedManifest) fs.rmSync(paths.manifest, { force: true });

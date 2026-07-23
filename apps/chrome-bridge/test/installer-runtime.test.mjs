@@ -3,6 +3,7 @@ import test from 'node:test';
 
 process.env.KV_BRIDGE_TEST = '1';
 const { doctor, install, pathsForInstall, uninstall } = await import('../dist/install.js');
+const { createKvWrapper, createNativeHostManifest } = await import('../dist/install-helpers.js');
 
 function fakeFs(initial = {}) {
   const files = new Map(Object.entries(initial));
@@ -48,6 +49,70 @@ test('uninstall leaves foreign registry, manifest, and wrapper untouched', () =>
   assert.equal(fs.files.has(paths.manifest), true);
   assert.equal(fs.files.has(paths.wrapper), true);
   assert.equal(calls.some((call) => call[0] === 'delete'), false);
+});
+
+test('installer restores prior Kv artifacts when registry add or verification fails', () => {
+  const paths = pathsForInstall(base);
+  const oldWrapper = createKvWrapper(paths.bridge, 'C:\\old-node.exe');
+  const oldManifest = `${JSON.stringify(createNativeHostManifest('bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', paths.wrapper), null, 2)}\n`;
+  for (const failure of ['add', 'query']) {
+    const fs = fakeFs({ [paths.bridge]: 'bridge', [paths.wrapper]: oldWrapper, [paths.manifest]: oldManifest });
+    const runner = (args) => {
+      if (args[0] === failure) return { status: 1, stdout: '', stderr: 'injected registry failure' };
+      return { status: 0, stdout: '', stderr: '' };
+    };
+    assert.throws(() => install(EXTENSION_ID, { ...base, fs, runner }), /Registry/);
+    assert.equal(fs.files.get(paths.wrapper), oldWrapper);
+    assert.equal(fs.files.get(paths.manifest), oldManifest);
+  }
+});
+
+test('installer refuses foreign artifacts and never overwrites a concurrent change', () => {
+  const paths = pathsForInstall(base);
+  const foreignFs = fakeFs({ [paths.bridge]: 'bridge', [paths.wrapper]: '@echo foreign' });
+  assert.throws(() => install(EXTENSION_ID, { ...base, fs: foreignFs, runner: () => ({ status: 0, stdout: '', stderr: '' }) }), /non-Kv artifact/);
+  assert.equal(foreignFs.files.get(paths.wrapper), '@echo foreign');
+
+  const oldManifest = `${JSON.stringify(createNativeHostManifest('bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', paths.wrapper), null, 2)}\n`;
+  const fs = fakeFs({ [paths.bridge]: 'bridge', [paths.manifest]: oldManifest });
+  const runner = (args) => {
+    if (args[0] === 'add') return { status: 0, stdout: '', stderr: '' };
+    // Simulate another writer changing the wrapper between our write and validation.
+    fs.files.set(paths.wrapper, '@echo foreign concurrent writer');
+    return { status: 0, stdout: `REG_SZ    ${paths.manifest}\r\n`, stderr: '' };
+  };
+  assert.throws(() => install(EXTENSION_ID, { ...base, fs, runner }), /consistency/);
+  assert.equal(fs.files.get(paths.wrapper), '@echo foreign concurrent writer');
+  assert.equal(fs.files.get(paths.manifest), oldManifest);
+});
+
+test('installer rejects a tampered manifest even when its schema remains Kv-shaped', () => {
+  const paths = pathsForInstall(base);
+  const fs = fakeFs({ [paths.bridge]: 'bridge' });
+  const runner = (args) => {
+    if (args[0] === 'add') {
+      const tampered = JSON.parse(fs.files.get(paths.manifest));
+      tampered.description = 'Kv Browser Bridge (tampered)';
+      fs.files.set(paths.manifest, `${JSON.stringify(tampered, null, 2)}\n`);
+      return { status: 0, stdout: '', stderr: '' };
+    }
+    return { status: 0, stdout: `REG_SZ    ${paths.manifest}\r\n`, stderr: '' };
+  };
+  assert.throws(() => install(EXTENSION_ID, { ...base, fs, runner }), /exact manifest/);
+  assert.equal(fs.files.has(paths.manifest), false);
+});
+
+test('uninstall never deletes registry solely because a Kv wrapper exists', () => {
+  const paths = pathsForInstall(base);
+  const fs = fakeFs({
+    [paths.manifest]: JSON.stringify({ name: 'foreign' }),
+    [paths.wrapper]: createKvWrapper(paths.bridge, 'C:\\node.exe'),
+  });
+  const calls = [];
+  const runner = (args) => { calls.push(args); return { status: 0, stdout: `REG_SZ    ${paths.manifest}\r\n`, stderr: '' }; };
+  uninstall({ ...base, fs, runner });
+  assert.equal(calls.some((call) => call[0] === 'delete'), false);
+  assert.equal(fs.files.has(paths.manifest), true);
 });
 
 test('doctor reports structured required failures without registry access', () => {
