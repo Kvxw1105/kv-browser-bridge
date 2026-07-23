@@ -15,6 +15,10 @@
     "apps/*"
   ],
   "scripts": {
+    "test": "npm run test:branding && npm run test:local-chrome && node --test test/release-engineering.test.mjs",
+    "check": "npm run check:local-chrome && node scripts/check-versions.mjs",
+    "package": "npm run build:extension && node scripts/package-extension.mjs",
+    "release-check": "npm run test && npm run check && npm run package && node scripts/validate-npm-pack.mjs",
     "dev": "turbo dev",
     "build": "turbo build",
     "chrome": "/Applications/Google\\ Chrome.app/Contents/MacOS/Google\\ Chrome --remote-debugging-port=9222 --user-data-dir=/tmp/chrome-ccb",

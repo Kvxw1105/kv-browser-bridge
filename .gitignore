@@ -8,4 +8,5 @@ dist/
 .worktrees/
 # Extension build artifacts (both old `-extension-` and newer `-vX.Y.Z` naming)
 claude-code-browser*.zip
+release/
 dist-web/
