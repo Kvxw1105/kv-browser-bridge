@@ -5,6 +5,8 @@ type BridgeState = 'connecting' | 'connected' | 'disconnected';
 type BrowserTab = { id: number; title: string; url: string; active: boolean };
 type RecordingState = { active: boolean; id?: string; tabId?: number; intent?: string; events?: number };
 type WorkflowSummary = { id: string; steps: unknown[]; checkpoints: unknown[] };
+type Locale = 'zh' | 'en';
+type Theme = 'light' | 'dark';
 
 export function LocalBridgePanel() {
   const [state, setState] = useState<BridgeState>('connecting');
@@ -18,6 +20,14 @@ export function LocalBridgePanel() {
   const [lastWorkflow, setLastWorkflow] = useState<WorkflowSummary | null>(null);
   const [grantedPermissions, setGrantedPermissions] = useState<string[]>([]);
   const [updatedAt, setUpdatedAt] = useState('');
+  const [locale, setLocale] = useState<Locale>('zh');
+  const [theme, setTheme] = useState<Theme>('light');
+  const chinese = locale === 'zh';
+  const text = chinese ? {
+    eyebrow: '本地浏览器控制', connected: '已连接', connecting: '正在连接', disconnected: '未连接', ready: '浏览器已就绪', connectingTitle: '正在连接 Chrome', unavailable: '桥接不可用', readyBody: '当前 Chrome 登录态已可供使用。', unavailableBody: '请保持 Chrome 打开并启用扩展。', target: '当前目标', noTarget: '未选择标签页', refresh: '刷新', openPage: '打开一个页面后再打开 Kv Bridge。', noUrl: '没有可用的页面 URL', updated: '已更新', waiting: '等待页面详情', pick: '选择元素', copy: '复制标签页 ID', access: '浏览器访问', enabled: '已启用', bookmarks: '书签', bookmarksDesc: '打开已保存的目的地', downloads: '下载', downloadsDesc: '读取最近下载状态', extensions: '扩展程序', extensionsDesc: '检查已安装扩展', enable: '启用', tabs: '打开的标签页', tabsHint: '选择 Agent 工具的默认目标页。', refreshList: '刷新列表', targetTag: '目标', active: '当前', noTabs: '当前窗口没有可浏览的标签页。', recorder: '工作流录制器', recording: '已在标签页', events: '记录事件', recorderHint: '记录 Agent 任务与您的手动页面操作。', intentPlaceholder: '这个工作流要完成什么？', start: '开始录制', stop: '停止录制', saved: '已保存草稿', steps: '个步骤', checkpoints: '个检查点', native: '本地消息', error: '录制请求失败。', dark: '深色模式', light: '浅色模式'
+  } : {
+    eyebrow: 'LOCAL BROWSER CONTROL', connected: 'Connected', connecting: 'Connecting', disconnected: 'Disconnected', ready: 'Browser ready', connectingTitle: 'Connecting to Chrome', unavailable: 'Bridge unavailable', readyBody: 'Your existing Chrome session is available.', unavailableBody: 'Keep Chrome open and the extension enabled.', target: 'Current target', noTarget: 'No tab selected', refresh: 'Refresh', openPage: 'Open a page, then open Kv Bridge.', noUrl: 'No page URL available', updated: 'Updated', waiting: 'Waiting for page details', pick: 'Pick element', copy: 'Copy tab ID', access: 'Browser access', enabled: 'enabled', bookmarks: 'Bookmarks', bookmarksDesc: 'Open saved destinations', downloads: 'Downloads', downloadsDesc: 'Read recent download status', extensions: 'Extensions', extensionsDesc: 'Inspect installed extensions', enable: 'Enable', tabs: 'Open tabs', tabsHint: 'Select the default target for Agent tools.', refreshList: 'Refresh list', targetTag: 'Target', active: 'Active', noTabs: 'No browsable tabs found in this window.', recorder: 'Workflow recorder', recording: 'captured events on tab', events: '', recorderHint: 'Capture an Agent task and your manual browser steps.', intentPlaceholder: 'What should this workflow accomplish?', start: 'Start recording', stop: 'Stop recording', saved: 'Saved draft', steps: 'steps', checkpoints: 'checkpoints', native: 'Native Messaging', error: 'Recording request failed.', dark: 'Dark mode', light: 'Light mode'
+  };
 
   const refreshTarget = () => {
     if (targetTabId == null) return;
@@ -45,6 +55,10 @@ export function LocalBridgePanel() {
   };
 
   useEffect(() => {
+    chrome.storage.local.get(['kv-panel-locale', 'kv-panel-theme'], (settings) => {
+      if (settings['kv-panel-locale'] === 'en' || settings['kv-panel-locale'] === 'zh') setLocale(settings['kv-panel-locale']);
+      if (settings['kv-panel-theme'] === 'dark' || settings['kv-panel-theme'] === 'light') setTheme(settings['kv-panel-theme']);
+    });
     if (MY_TAB_ID != null) {
       refreshTarget();
     }
@@ -63,7 +77,7 @@ export function LocalBridgePanel() {
     return () => port.disconnect();
   }, []);
 
-  const label = state === 'connected' ? 'Connected' : state === 'connecting' ? 'Connecting' : 'Disconnected';
+  const label = state === 'connected' ? text.connected : state === 'connecting' ? text.connecting : text.disconnected;
   const connected = state === 'connected';
   const requestPermission = async (permission: string) => {
     const granted = await chrome.permissions.request({ permissions: [permission] });
@@ -88,70 +102,75 @@ export function LocalBridgePanel() {
     setRecordError('');
     if (action === 'start') setLastWorkflow(null);
     chrome.runtime.sendMessage({ type: 'KV_FLOW_CONTROL', action, tabId: targetTabId, intent: recordIntent }, (response?: { ok?: boolean; error?: string; status?: RecordingState; result?: WorkflowSummary }) => {
-      if (!response?.ok) { setRecordError(response?.error || 'Recording request failed.'); return; }
+      if (!response?.ok) { setRecordError(response?.error || text.error); return; }
       if (response.status) setRecording(response.status);
       if (action === 'stop') { setRecordIntent(''); setLastWorkflow(response.result ?? null); }
     });
   };
 
   return (
-    <main className="local-bridge-panel">
+    <main className="local-bridge-panel" data-theme={theme} lang={locale === 'zh' ? 'zh-CN' : 'en'}>
       <header className="local-bridge-panel__header" aria-label="Kv Browser Bridge status">
         <div className="local-bridge-panel__brand">
           <img className="local-bridge-panel__mark" src={chrome.runtime.getURL('icon-48.png')} alt="Kv" />
           <div>
-            <p className="local-bridge-panel__eyebrow">LOCAL BROWSER CONTROL</p>
+            <p className="local-bridge-panel__eyebrow">{text.eyebrow}</p>
             <h1>Kv Bridge</h1>
           </div>
         </div>
-        <span className={`local-bridge-panel__state local-bridge-panel__state--${state}`}>
-          <i aria-hidden="true" />{label}
-        </span>
+        <div className="local-bridge-panel__header-actions">
+          <div className="local-bridge-panel__toggle" aria-label="Panel language">
+            <button className={locale === 'zh' ? 'is-active' : ''} onClick={() => { setLocale('zh'); chrome.storage.local.set({ 'kv-panel-locale': 'zh' }); }}>中文</button>
+            <button className={locale === 'en' ? 'is-active' : ''} onClick={() => { setLocale('en'); chrome.storage.local.set({ 'kv-panel-locale': 'en' }); }}>EN</button>
+          </div>
+          <button className="local-bridge-panel__theme" onClick={() => { const next = theme === 'light' ? 'dark' : 'light'; setTheme(next); chrome.storage.local.set({ 'kv-panel-theme': next }); }} aria-label={theme === 'light' ? text.dark : text.light}>{theme === 'light' ? 'Dark' : 'Light'}</button>
+          <span className={`local-bridge-panel__state local-bridge-panel__state--${state}`}><i aria-hidden="true" />{label}</span>
+        </div>
       </header>
 
       <section className={`local-bridge-panel__hero local-bridge-panel__hero--${state}`}>
         <div className="local-bridge-panel__signal" aria-hidden="true"><span /><span /><span /></div>
         <div className="local-bridge-panel__hero-copy">
-          <p>{connected ? 'Browser ready' : state === 'connecting' ? 'Connecting to Chrome' : 'Bridge unavailable'}</p>
-          <strong>{connected ? 'Your existing Chrome session is available.' : 'Keep Chrome open and the extension enabled.'}</strong>
+          <p>{connected ? text.ready : state === 'connecting' ? text.connectingTitle : text.unavailable}</p>
+          <strong>{connected ? text.readyBody : text.unavailableBody}</strong>
         </div>
       </section>
 
       <div className="local-bridge-panel__workspace">
         <section className="local-bridge-panel__section local-bridge-panel__section--target" aria-labelledby="target-heading">
           <div className="local-bridge-panel__section-header">
-            <p id="target-heading">Current target</p>
+            <p id="target-heading">{text.target}</p>
             <div className="local-bridge-panel__section-actions">
-              <span>{targetTabId == null ? 'No tab selected' : `Tab ${targetTabId}`}</span>
-              <button onClick={refreshTarget} disabled={targetTabId == null}>Refresh</button>
+              <span>{targetTabId == null ? text.noTarget : `Tab ${targetTabId}`}</span>
+              <button onClick={refreshTarget} disabled={targetTabId == null}>{text.refresh}</button>
             </div>
           </div>
           <div className="local-bridge-panel__target">
             <span className="local-bridge-panel__target-icon" aria-hidden="true">K</span>
             <div className="local-bridge-panel__target-copy">
-              <strong title={target}>{target || (targetTabId == null ? 'Open a page, then open Kv Bridge.' : `Chrome tab ${targetTabId}`)}</strong>
-              <span title={targetUrl}>{targetUrl || 'No page URL available'}</span>
+              <strong title={target}>{target || (targetTabId == null ? text.openPage : `Chrome tab ${targetTabId}`)}</strong>
+              <span title={targetUrl}>{targetUrl || text.noUrl}</span>
             </div>
           </div>
           <div className="local-bridge-panel__target-footer">
-            <span>{updatedAt ? `Updated ${updatedAt}` : 'Waiting for page details'}</span>
+            <span>{updatedAt ? `${text.updated} ${updatedAt}` : text.waiting}</span>
             <div className="local-bridge-panel__target-actions">
-              <button onClick={activatePicker} disabled={targetTabId == null}>Pick element</button>
-              <button onClick={copyTarget} disabled={targetTabId == null}>Copy tab ID</button>
+              <button onClick={activatePicker} disabled={targetTabId == null}>{text.pick}</button>
+              <button onClick={copyTarget} disabled={targetTabId == null}>{text.copy}</button>
             </div>
           </div>
         </section>
 
         <section className="local-bridge-panel__section local-bridge-panel__section--access" aria-labelledby="access-heading">
           <div className="local-bridge-panel__section-header">
-            <p id="access-heading">Browser access</p>
-            <span>{grantedPermissions.length} enabled</span>
+            <p id="access-heading">{text.access}</p>
+            <span>{grantedPermissions.length} {text.enabled}</span>
           </div>
           <div className="local-bridge-panel__access-list">
             {[
-              ['bookmarks', 'Bookmarks', 'Open saved destinations'],
-              ['downloads', 'Downloads', 'Read recent download status'],
-              ['management', 'Extensions', 'Inspect installed extensions'],
+              ['bookmarks', text.bookmarks, text.bookmarksDesc],
+              ['downloads', text.downloads, text.downloadsDesc],
+              ['management', text.extensions, text.extensionsDesc],
             ].map(([permission, name, description]) => (
               <div key={permission} className="local-bridge-panel__permission">
                 <div>
@@ -159,8 +178,8 @@ export function LocalBridgePanel() {
                   <span>{description}</span>
                 </div>
                 {grantedPermissions.includes(permission)
-                  ? <span className="local-bridge-panel__granted"><i aria-hidden="true">OK</i> Enabled</span>
-                  : <button onClick={() => void requestPermission(permission)}>Enable</button>}
+                  ? <span className="local-bridge-panel__granted"><i aria-hidden="true">OK</i> {text.enabled}</span>
+                  : <button onClick={() => void requestPermission(permission)}>{text.enable}</button>}
               </div>
             ))}
           </div>
@@ -169,40 +188,40 @@ export function LocalBridgePanel() {
 
       <section className="local-bridge-panel__tabs" aria-labelledby="tabs-heading">
         <div className="local-bridge-panel__tabs-header">
-          <div><p id="tabs-heading">Open tabs</p><span>Select the default target for Agent tools.</span></div>
-          <button onClick={refreshTabs}>Refresh list</button>
+          <div><p id="tabs-heading">{text.tabs}</p><span>{text.tabsHint}</span></div>
+          <button onClick={refreshTabs}>{text.refreshList}</button>
         </div>
         <div className="local-bridge-panel__tab-list">
           {tabs.map((tab) => (
             <button key={tab.id} className={`local-bridge-panel__tab${tab.id === targetTabId ? ' local-bridge-panel__tab--selected' : ''}`} onClick={() => selectTarget(tab.id)}>
               <i aria-hidden="true" />
               <span>{tab.title}</span>
-              <em>{tab.id === targetTabId ? 'Target' : tab.active ? 'Active' : ''}</em>
+              <em>{tab.id === targetTabId ? text.targetTag : tab.active ? text.active : ''}</em>
             </button>
           ))}
-          {tabs.length === 0 && <p className="local-bridge-panel__tabs-empty">No browsable tabs found in this window.</p>}
+          {tabs.length === 0 && <p className="local-bridge-panel__tabs-empty">{text.noTabs}</p>}
         </div>
       </section>
 
       <section className="local-bridge-panel__record" aria-labelledby="record-heading">
         <div>
-          <p id="record-heading">Workflow recorder</p>
-          <span>{recording.active ? `${recording.events ?? 0} captured events on tab ${recording.tabId}` : 'Capture an Agent task and your manual browser steps.'}</span>
+          <p id="record-heading">{text.recorder}</p>
+          <span>{recording.active ? `${recording.events ?? 0} ${text.recording} ${recording.tabId}` : text.recorderHint}</span>
         </div>
         {recording.active ? (
-          <button className="local-bridge-panel__record-stop" onClick={() => controlRecording('stop')}>Stop recording</button>
+          <button className="local-bridge-panel__record-stop" onClick={() => controlRecording('stop')}>{text.stop}</button>
         ) : (
           <div className="local-bridge-panel__record-start">
-            <input value={recordIntent} onChange={(event) => setRecordIntent(event.target.value)} placeholder="What should this workflow accomplish?" aria-label="Workflow intent" />
-            <button onClick={() => controlRecording('start')} disabled={targetTabId == null || recordIntent.trim().length < 3}>Start recording</button>
+            <input value={recordIntent} onChange={(event) => setRecordIntent(event.target.value)} placeholder={text.intentPlaceholder} aria-label={text.recorder} />
+            <button onClick={() => controlRecording('start')} disabled={targetTabId == null || recordIntent.trim().length < 3}>{text.start}</button>
           </div>
         )}
         {recordError && <small>{recordError}</small>}
-        {lastWorkflow && <small className="local-bridge-panel__record-result">Saved draft {lastWorkflow.id}: {lastWorkflow.steps.length} steps, {lastWorkflow.checkpoints.length} checkpoints.</small>}
+        {lastWorkflow && <small className="local-bridge-panel__record-result">{text.saved} {lastWorkflow.id}: {lastWorkflow.steps.length} {text.steps}, {lastWorkflow.checkpoints.length} {text.checkpoints}.</small>}
       </section>
 
       <footer className="local-bridge-panel__footer">
-        <span>Native Messaging</span><b aria-hidden="true" /> <span>kv-browser-bridge MCP</span>
+        <span>{text.native}</span><b aria-hidden="true" /> <span>kv-browser-bridge MCP</span>
       </footer>
     </main>
   );
