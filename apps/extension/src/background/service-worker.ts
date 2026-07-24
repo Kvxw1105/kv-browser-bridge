@@ -1,5 +1,5 @@
 import { clearSelectedTab, getSelectedTabId, handleBrowserRequest, setSelectedTab, type BrowserResponse } from './browser-executor';
-import { recordFlowUserEvent } from './flow-recorder';
+import { flowRecordingStatus, recordFlowUserEvent, startFlowRecording, stopFlowRecording } from './flow-recorder';
 
 const HOST_NAME = 'io.kv.browser_bridge';
 const MAX_NATIVE_MESSAGE_BYTES = 480 * 1024;
@@ -168,7 +168,39 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   clearSelectedTab(tabId);
 });
 
-chrome.runtime.onMessage.addListener((message, sender) => {
-  if (message?.type !== 'KV_FLOW_USER_EVENT' || sender.tab?.id == null || typeof message.event !== 'object' || message.event == null) return;
-  recordFlowUserEvent(sender.tab.id, message.event);
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === 'KV_FLOW_USER_EVENT' && sender.tab?.id != null && typeof message.event === 'object' && message.event != null) {
+    recordFlowUserEvent(sender.tab.id, message.event);
+    return;
+  }
+  if (message?.type === 'KV_FLOW_CONTROL') {
+    const tabId = typeof message.tabId === 'number' ? message.tabId : null;
+    const intent = typeof message.intent === 'string' ? message.intent.trim() : '';
+    if (message.action === 'status') {
+      sendResponse({ ok: true, status: flowRecordingStatus() });
+      return;
+    }
+    if (tabId == null) {
+      sendResponse({ ok: false, error: 'A target tab is required.' });
+      return;
+    }
+    if (message.action === 'start' && intent.length < 3) {
+      sendResponse({ ok: false, error: 'Describe the workflow in at least 3 characters.' });
+      return;
+    }
+    const operation = message.action === 'start'
+      ? startFlowRecording(tabId, intent, false)
+      : message.action === 'stop'
+        ? stopFlowRecording(tabId)
+        : Promise.reject(new Error('Unknown recording operation.'));
+    void operation.then((result) => sendResponse({ ok: true, result, status: flowRecordingStatus() }))
+      .catch((error) => sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error), status: flowRecordingStatus() }));
+    return true;
+  }
+  if (message?.type !== 'KV_SET_TARGET_TAB' || typeof message.tabId !== 'number') return;
+  void chrome.tabs.get(message.tabId).then((tab) => {
+    setSelectedTab(message.tabId);
+    sendResponse({ ok: true, tabId: message.tabId, title: tab.title ?? '', url: tab.url ?? '' });
+  }).catch(() => sendResponse({ ok: false }));
+  return true;
 });
