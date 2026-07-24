@@ -6,13 +6,23 @@ type BridgeState = 'connecting' | 'connected' | 'disconnected';
 export function LocalBridgePanel() {
   const [state, setState] = useState<BridgeState>('connecting');
   const [target, setTarget] = useState('');
+  const [targetUrl, setTargetUrl] = useState('');
   const [grantedPermissions, setGrantedPermissions] = useState<string[]>([]);
+  const [updatedAt, setUpdatedAt] = useState('');
+
+  const refreshTarget = () => {
+    if (MY_TAB_ID == null) return;
+    chrome.tabs.get(MY_TAB_ID, (tab) => {
+      if (chrome.runtime.lastError) return;
+      setTarget(tab.title || tab.url || `Tab ${MY_TAB_ID}`);
+      setTargetUrl(tab.url || '');
+      setUpdatedAt(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+    });
+  };
 
   useEffect(() => {
     if (MY_TAB_ID != null) {
-      chrome.tabs.get(MY_TAB_ID, (tab) => {
-        if (!chrome.runtime.lastError) setTarget(tab.title || tab.url || `Tab ${MY_TAB_ID}`);
-      });
+      refreshTarget();
     }
 
     const port = chrome.runtime.connect({ name: 'sidepanel' });
@@ -32,6 +42,9 @@ export function LocalBridgePanel() {
   const requestPermission = async (permission: string) => {
     const granted = await chrome.permissions.request({ permissions: [permission] });
     if (granted) setGrantedPermissions((current) => [...new Set([...current, permission])]);
+  };
+  const copyTarget = () => {
+    if (MY_TAB_ID != null) void navigator.clipboard.writeText(String(MY_TAB_ID));
   };
 
   return (
@@ -57,39 +70,57 @@ export function LocalBridgePanel() {
         </div>
       </section>
 
-      <section className="local-bridge-panel__section" aria-labelledby="target-heading">
-        <div className="local-bridge-panel__section-header">
-          <p id="target-heading">Current target</p>
-          <span>{MY_TAB_ID == null ? 'No tab selected' : `Tab ${MY_TAB_ID}`}</span>
-        </div>
-        <div className="local-bridge-panel__target">
-          <span className="local-bridge-panel__target-icon" aria-hidden="true">K</span>
-          <strong title={target}>{target || (MY_TAB_ID == null ? 'Open a page, then open Kv Bridge.' : `Chrome tab ${MY_TAB_ID}`)}</strong>
-        </div>
-      </section>
-
-      <section className="local-bridge-panel__section" aria-labelledby="access-heading">
-        <div className="local-bridge-panel__section-header">
-          <p id="access-heading">Browser access</p>
-          <span>{grantedPermissions.length} enabled</span>
-        </div>
-        <div className="local-bridge-panel__access-list">
-          {[
-            ['bookmarks', 'Bookmarks', 'Open saved destinations'],
-            ['downloads', 'Downloads', 'Read recent download status'],
-            ['management', 'Extensions', 'Inspect installed extensions'],
-          ].map(([permission, name, description]) => (
-            <div key={permission} className="local-bridge-panel__permission">
-              <div>
-                <strong>{name}</strong>
-                <span>{description}</span>
-              </div>
-              {grantedPermissions.includes(permission)
-                ? <span className="local-bridge-panel__granted"><i aria-hidden="true">OK</i> Enabled</span>
-                : <button onClick={() => void requestPermission(permission)}>Enable</button>}
+      <div className="local-bridge-panel__workspace">
+        <section className="local-bridge-panel__section local-bridge-panel__section--target" aria-labelledby="target-heading">
+          <div className="local-bridge-panel__section-header">
+            <p id="target-heading">Current target</p>
+            <div className="local-bridge-panel__section-actions">
+              <span>{MY_TAB_ID == null ? 'No tab selected' : `Tab ${MY_TAB_ID}`}</span>
+              <button onClick={refreshTarget} disabled={MY_TAB_ID == null}>Refresh</button>
             </div>
-          ))}
-        </div>
+          </div>
+          <div className="local-bridge-panel__target">
+            <span className="local-bridge-panel__target-icon" aria-hidden="true">K</span>
+            <div className="local-bridge-panel__target-copy">
+              <strong title={target}>{target || (MY_TAB_ID == null ? 'Open a page, then open Kv Bridge.' : `Chrome tab ${MY_TAB_ID}`)}</strong>
+              <span title={targetUrl}>{targetUrl || 'No page URL available'}</span>
+            </div>
+          </div>
+          <div className="local-bridge-panel__target-footer">
+            <span>{updatedAt ? `Updated ${updatedAt}` : 'Waiting for page details'}</span>
+            <button onClick={copyTarget} disabled={MY_TAB_ID == null}>Copy tab ID</button>
+          </div>
+        </section>
+
+        <section className="local-bridge-panel__section local-bridge-panel__section--access" aria-labelledby="access-heading">
+          <div className="local-bridge-panel__section-header">
+            <p id="access-heading">Browser access</p>
+            <span>{grantedPermissions.length} enabled</span>
+          </div>
+          <div className="local-bridge-panel__access-list">
+            {[
+              ['bookmarks', 'Bookmarks', 'Open saved destinations'],
+              ['downloads', 'Downloads', 'Read recent download status'],
+              ['management', 'Extensions', 'Inspect installed extensions'],
+            ].map(([permission, name, description]) => (
+              <div key={permission} className="local-bridge-panel__permission">
+                <div>
+                  <strong>{name}</strong>
+                  <span>{description}</span>
+                </div>
+                {grantedPermissions.includes(permission)
+                  ? <span className="local-bridge-panel__granted"><i aria-hidden="true">OK</i> Enabled</span>
+                  : <button onClick={() => void requestPermission(permission)}>Enable</button>}
+              </div>
+            ))}
+          </div>
+        </section>
+      </div>
+
+      <section className="local-bridge-panel__capabilities" aria-label="Available browser capabilities">
+        <div><strong>Inspect</strong><span>Snapshot, console, network, and page metrics.</span></div>
+        <div><strong>Operate</strong><span>Tabs, form fields, files, clicks, and keyboard input.</span></div>
+        <div><strong>Record</strong><span>Capture reusable hybrid browser workflows.</span></div>
       </section>
 
       <footer className="local-bridge-panel__footer">
