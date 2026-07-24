@@ -257,6 +257,23 @@ server.tool('browser_connection_status', 'Probe the existing Chrome Bridge and r
   }
 });
 
+server.tool('browser_record_start', 'Explicitly start recording a reusable hybrid browser workflow for one Chrome tab. Input values remain redacted unless recordInputValues is explicitly true.', {
+  tabId: z.number().int().positive().describe('Exact Chrome tab ID to record.'),
+  intent: z.string().min(3).max(500).describe('Concise description of the workflow outcome.'),
+  recordInputValues: z.boolean().optional().describe('Opt in to storing non-sensitive manual input text. Passwords, OTPs, tokens, and secrets stay redacted.'),
+}, async (params) => callBridge('browser_record_start', params));
+
+server.tool('browser_record_stop', 'Stop recording and return a reviewable workflow draft with semantic targets, normalized coordinates, and human-guidance checkpoints.', {
+  tabId: z.number().int().positive().describe('Exact Chrome tab ID that owns the active recording.'),
+}, async (params) => callBridge('browser_record_stop', params));
+
+server.tool('browser_record_status', 'Return the active workflow recorder status without changing the page.', {}, async () => callBridge('browser_record_status'));
+
+server.tool('browser_record_note', 'Add a concise intent, correction, or human-guidance note to an active recording.', {
+  tabId: z.number().int().positive().describe('Exact Chrome tab ID that owns the active recording.'),
+  message: z.string().min(1).max(2_000).describe('What changed, what the user did, or why the workflow paused.'),
+}, async (params) => callBridge('browser_record_note', params));
+
 async function main(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);

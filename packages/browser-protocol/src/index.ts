@@ -8,6 +8,8 @@ export const NATIVE_MESSAGE_MAX_BYTES = 1024 * 1024;
 export const NATIVE_CHUNK_MAX_BYTES = 384 * 1024;
 export const PIPE_LINE_MAX_BYTES = 1024 * 1024;
 
+export * from './flow-recorder.js';
+
 export type BrowserAction =
   | 'get_tabs'
   | 'new_tab'
@@ -38,7 +40,11 @@ export type BrowserAction =
   | 'get_response_body'
   | 'inspect_element'
   | 'get_element_styles'
-  | 'page_metrics';
+  | 'page_metrics'
+  | 'record_start'
+  | 'record_stop'
+  | 'record_status'
+  | 'record_note';
 
 export type BrowserToolName = `browser_${BrowserAction}`;
 export type OperationClass = 'read' | 'non_idempotent_write';
@@ -162,7 +168,7 @@ export interface BridgeConnectionStatus {
 }
 
 export function operationClassFor(action: BrowserAction): OperationClass {
-  return new Set<BrowserAction>(['get_tabs', 'find', 'download_status', 'list_bookmarks', 'list_extensions', 'snapshot', 'screenshot', 'wait_for', 'get_text', 'get_url', 'console_logs', 'console_errors', 'network_requests', 'network_failures', 'get_response_body', 'inspect_element', 'get_element_styles', 'page_metrics']).has(action)
+  return new Set<BrowserAction>(['get_tabs', 'find', 'download_status', 'list_bookmarks', 'list_extensions', 'snapshot', 'screenshot', 'wait_for', 'get_text', 'get_url', 'console_logs', 'console_errors', 'network_requests', 'network_failures', 'get_response_body', 'inspect_element', 'get_element_styles', 'page_metrics', 'record_status']).has(action)
     ? 'read' : 'non_idempotent_write';
 }
 
@@ -183,7 +189,7 @@ export function browserActionFromTool(method: BrowserToolName): BrowserAction {
 }
 
 export function isBrowserToolName(value: string): value is BrowserToolName {
-  return /^browser_(get_tabs|new_tab|switch_tab|scroll|find|close_tab|download_status|list_bookmarks|open_bookmark|list_extensions|navigate|snapshot|screenshot|click|type|press|select|evaluate|set_files|wait_for|get_text|get_url|console_logs|console_errors|network_requests|network_failures|get_response_body|inspect_element|get_element_styles|page_metrics)$/.test(value);
+  return /^browser_(get_tabs|new_tab|switch_tab|scroll|find|close_tab|download_status|list_bookmarks|open_bookmark|list_extensions|navigate|snapshot|screenshot|click|type|press|select|evaluate|set_files|wait_for|get_text|get_url|console_logs|console_errors|network_requests|network_failures|get_response_body|inspect_element|get_element_styles|page_metrics|record_start|record_stop|record_status|record_note)$/.test(value);
 }
 
 export function isNativeChunk(value: unknown): value is NativeChunk {

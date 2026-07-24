@@ -3,6 +3,7 @@
  * here means a native-messaging client can use the already-running Chrome even
  * when no side panel document exists.
  */
+import { flowRecordingStatus, recordFlowAgentAction, recordFlowBlocker, recordFlowNote, startFlowRecording, stopFlowRecording } from './flow-recorder';
 
 export type BrowserRequest = {
   requestId: string;
@@ -882,11 +883,26 @@ export async function handleBrowserRequest(request: BrowserRequest, connectionSt
     else if (action === 'open_bookmark') result = await openBookmark(params);
     else if (action === 'list_extensions') result = await listExtensions(params);
     else if (action === 'connection_status') result = connectionStatus();
+    else if (action === 'record_status') result = flowRecordingStatus();
     else {
-      const requiresExplicitTab = new Set(['navigate', 'scroll', 'click', 'type', 'press', 'select', 'evaluate', 'set_files']);
+      const requiresExplicitTab = new Set(['navigate', 'scroll', 'click', 'type', 'press', 'select', 'evaluate', 'set_files', 'record_start', 'record_stop', 'record_note']);
       if (requiresExplicitTab.has(action) && numberParam(params.tabId) == null) throw new ToolError('EXPLICIT_TAB_ID_REQUIRED', `${action} requires an explicit tabId`, false);
       const tabId = await resolveTabId(params);
       switch (action) {
+        case 'record_start': {
+          const intent = typeof params.intent === 'string' ? params.intent.trim() : '';
+          if (intent.length < 3) throw new ToolError('INVALID_RECORDING_INTENT', 'intent must contain at least 3 characters');
+          result = await startFlowRecording(tabId, intent, params.recordInputValues === true);
+          break;
+        }
+        case 'record_stop': result = await stopFlowRecording(tabId); break;
+        case 'record_note': {
+          const message = typeof params.message === 'string' ? params.message.trim() : '';
+          if (!message) throw new ToolError('INVALID_RECORDING_NOTE', 'message is required');
+          recordFlowNote(tabId, message);
+          result = { noted: true, tabId };
+          break;
+        }
         case 'navigate': result = await navigate(tabId, params); break;
         case 'scroll': result = await scroll(tabId, params); break;
         case 'find': result = await find(tabId, params); break;
@@ -917,9 +933,12 @@ export async function handleBrowserRequest(request: BrowserRequest, connectionSt
         case 'page_metrics': result = await pageMetrics(tabId); break;
         default: throw new ToolError('UNKNOWN_ACTION', `Unknown browser action: ${request.action}`);
       }
+      if (!action.startsWith('record_')) recordFlowAgentAction(tabId, action, params, result);
     }
     return { type: 'browser:response', requestId: request.requestId, result };
   } catch (error) {
+    const tabId = numberParam(params.tabId) ?? getSelectedTabId(sessionFor(params));
+    if (tabId != null && !action.startsWith('record_') && error instanceof ToolError) recordFlowBlocker(tabId, error.code, error.message);
     return { type: 'browser:response', requestId: request.requestId, error: asError(error) };
   }
 }

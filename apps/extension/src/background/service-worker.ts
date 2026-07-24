@@ -1,4 +1,5 @@
 import { clearSelectedTab, getSelectedTabId, handleBrowserRequest, setSelectedTab, type BrowserResponse } from './browser-executor';
+import { recordFlowUserEvent } from './flow-recorder';
 
 const HOST_NAME = 'io.kv.browser_bridge';
 const MAX_NATIVE_MESSAGE_BYTES = 480 * 1024;
@@ -165,4 +166,9 @@ chrome.action.onClicked.addListener((tab) => {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   clearSelectedTab(tabId);
+});
+
+chrome.runtime.onMessage.addListener((message, sender) => {
+  if (message?.type !== 'KV_FLOW_USER_EVENT' || sender.tab?.id == null || typeof message.event !== 'object' || message.event == null) return;
+  recordFlowUserEvent(sender.tab.id, message.event);
 });
