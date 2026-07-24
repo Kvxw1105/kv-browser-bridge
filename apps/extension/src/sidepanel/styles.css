@@ -1561,6 +1561,49 @@ body {
 @media (max-width: 720px) { .local-bridge-panel__tab-list { grid-template-columns: 1fr; }.local-bridge-panel__hero::after { display: none; } }
 @media (max-width: 520px) { .local-bridge-panel__header { align-items: flex-start; }.local-bridge-panel__header-actions { flex-wrap: wrap; justify-content: flex-end; }.local-bridge-panel__state { order: 3; }.local-bridge-panel__hero-copy strong { font-size: 15px; } }
 
+/* Layered material and motion: each transition reflects a live control state. */
+.local-bridge-panel { position: relative; isolation: isolate; }
+.local-bridge-panel__hero,
+.local-bridge-panel__section,
+.local-bridge-panel__tab,
+.local-bridge-panel__record {
+  backdrop-filter: blur(18px) saturate(125%);
+  -webkit-backdrop-filter: blur(18px) saturate(125%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08), 0 18px 45px rgba(0, 0, 0, .18);
+}
+.local-bridge-panel__hero { background: rgba(7, 8, 6, .78); }
+.local-bridge-panel__section,
+.local-bridge-panel__tab { background: rgba(26, 28, 24, .74); }
+.local-bridge-panel[data-theme="light"] .local-bridge-panel__section,
+.local-bridge-panel[data-theme="light"] .local-bridge-panel__tab { background: rgba(250, 250, 245, .66); }
+.local-bridge-panel[data-theme="light"] .local-bridge-panel__hero { background: rgba(23, 25, 22, .82); }
+.local-bridge-panel__section,
+.local-bridge-panel__tab,
+.local-bridge-panel__record,
+.local-bridge-panel__theme,
+.local-bridge-panel__toggle button,
+.local-bridge-panel__permission button,
+.local-bridge-panel__record button {
+  transition: transform 180ms ease, border-color 180ms ease, background-color 180ms ease, box-shadow 180ms ease, color 180ms ease;
+}
+.local-bridge-panel__section:hover { border-color: #59634a; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .1), 0 22px 54px rgba(0, 0, 0, .26); }
+.local-bridge-panel__tab:hover { transform: translateY(-2px); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .1), 0 12px 26px rgba(0, 0, 0, .22); }
+.local-bridge-panel__tab:active,
+.local-bridge-panel__permission button:active,
+.local-bridge-panel__record button:active,
+.local-bridge-panel__theme:active { transform: translateY(1px) scale(.98); }
+.local-bridge-panel__tab--selected { box-shadow: inset 0 0 0 1px rgba(216, 255, 69, .22), 0 14px 30px rgba(0, 0, 0, .22); }
+.local-bridge-panel__target-icon { box-shadow: 0 7px 18px rgba(216, 255, 69, .18); transition: transform 220ms ease, box-shadow 220ms ease; }
+.local-bridge-panel__section--target:hover .local-bridge-panel__target-icon { transform: rotate(-5deg) scale(1.06); box-shadow: 0 11px 24px rgba(216, 255, 69, .28); }
+.local-bridge-panel__section--target { animation: kv-rise 420ms ease both; }
+.local-bridge-panel__section--access { animation: kv-rise 420ms 70ms ease both; }
+.local-bridge-panel__tabs { animation: kv-rise 420ms 120ms ease both; }
+.local-bridge-panel__record { animation: kv-rise 420ms 170ms ease both; }
+@keyframes kv-rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) {
+  .local-bridge-panel *, .local-bridge-panel *::before, .local-bridge-panel *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; }
+}
+
 /* ── Review Prompt Banner ───────────────────────────────────────────────── */
 
 .review-prompt {
