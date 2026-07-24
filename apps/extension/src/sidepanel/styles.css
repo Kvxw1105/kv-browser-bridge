@@ -1418,6 +1418,15 @@ body {
   background-image: linear-gradient(140deg, #fbfbfd 0%, #f1f1f4 52%, #e9ecec 100%);
 }
 
+.local-bridge-panel[data-theme="dark"] {
+  --ink: #f5f5f7;
+  --muted: #a1a1a6;
+  --line: rgba(255, 255, 255, .12);
+  --panel: rgba(37, 37, 40, .82);
+  background: #111113;
+  background-image: linear-gradient(140deg, #1c1c1f 0%, #111113 58%, #191919 100%);
+}
+
 .local-bridge-panel__header {
   display: flex;
   align-items: center;
@@ -1427,9 +1436,17 @@ body {
   margin: 0 auto 26px;
 }
 
+.local-bridge-panel__header-actions { display: flex; align-items: center; gap: 8px; }
+.local-bridge-panel__toggle { display: inline-flex; padding: 2px; border: 1px solid var(--line); border-radius: 7px; background: rgba(255, 255, 255, .42); }
+.local-bridge-panel__toggle button, .local-bridge-panel__theme { height: 25px; border: 0; border-radius: 5px; padding: 0 7px; background: transparent; color: var(--muted); font-size: 10px; font-weight: 700; cursor: pointer; }
+.local-bridge-panel__toggle button.is-active { background: #1d1d1f; color: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.2); }
+.local-bridge-panel__theme { border: 1px solid var(--line); background: rgba(255,255,255,.42); color: var(--ink); }
+.local-bridge-panel[data-theme="dark"] .local-bridge-panel__toggle, .local-bridge-panel[data-theme="dark"] .local-bridge-panel__theme, .local-bridge-panel[data-theme="dark"] .local-bridge-panel__state { background: rgba(255,255,255,.07); }
+.local-bridge-panel[data-theme="dark"] .local-bridge-panel__toggle button.is-active { background: #f5f5f7; color: #1d1d1f; }
+
 .local-bridge-panel__brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .local-bridge-panel__mark { width: 42px; height: 42px; object-fit: contain; border-radius: 10px; box-shadow: 0 4px 16px rgba(20, 20, 20, 0.16); }
-.local-bridge-panel__eyebrow { color: #85858c; font-size: 10px; font-weight: 700; letter-spacing: .08em; }
+.local-bridge-panel__eyebrow { color: #85858c; font-size: 10px; font-weight: 700; letter-spacing: 0; }
 .local-bridge-panel__header h1 {
   margin: 0;
   font-size: 21px;
@@ -1501,6 +1518,7 @@ body {
 .local-bridge-panel__tab-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }.local-bridge-panel__tab { display: flex; align-items: center; gap: 9px; min-width: 0; padding: 10px 11px; border: 1px solid var(--line); border-radius: 7px; background: rgba(255,255,255,.46); color: var(--ink); text-align: left; cursor: pointer; }.local-bridge-panel__tab:hover { background: rgba(255,255,255,.92); }.local-bridge-panel__tab--selected { border-color: rgba(39,96,206,.45); background: rgba(39,96,206,.08); }.local-bridge-panel__tab i { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; background: #a1a1a6; }.local-bridge-panel__tab--selected i { background: #2760ce; }.local-bridge-panel__tab span { overflow: hidden; flex: 1; white-space: nowrap; text-overflow: ellipsis; font-size: 12px; font-weight: 600; }.local-bridge-panel__tab em { color: #2760ce; font-size: 10px; font-style: normal; font-weight: 650; }.local-bridge-panel__tabs-empty { color: var(--muted); font-size: 12px; padding: 10px 0; }
 .local-bridge-panel__record { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 16px; max-width: 980px; margin: 20px auto 0; padding: 14px 16px; border-radius: 8px; background: #1d1d1f; color: #fff; }.local-bridge-panel__record p { font-size: 12px; font-weight: 700; }.local-bridge-panel__record span { display: block; margin-top: 3px; color: #a1a1a6; font-size: 11px; }.local-bridge-panel__record-start { display: flex; gap: 8px; }.local-bridge-panel__record input { width: 230px; height: 32px; border: 1px solid #49494d; border-radius: 6px; padding: 0 9px; outline: 0; background: #303034; color: #fff; font: inherit; font-size: 11px; }.local-bridge-panel__record input:focus { border-color: #84aaff; }.local-bridge-panel__record button { height: 32px; border: 0; border-radius: 6px; padding: 0 10px; background: #fff; color: #1d1d1f; font-size: 11px; font-weight: 700; cursor: pointer; white-space: nowrap; }.local-bridge-panel__record button:disabled { opacity: .42; cursor: default; }.local-bridge-panel__record-stop { background: #f1b4b1 !important; color: #7f1d1d !important; }.local-bridge-panel__record small { grid-column: 1 / -1; color: #ffb4ab; font-size: 11px; }
 .local-bridge-panel__footer { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 18px 0 4px; color: #898990; font-size: 11px; }.local-bridge-panel__footer b { width: 3px; height: 3px; border-radius: 50%; background: #a1a1a6; }
+.local-bridge-panel[data-theme="dark"] .local-bridge-panel__target-icon { color: #ededf0; background: #3a3a3d; }.local-bridge-panel[data-theme="dark"] .local-bridge-panel__tab { background: rgba(255,255,255,.04); }.local-bridge-panel[data-theme="dark"] .local-bridge-panel__tab:hover { background: rgba(255,255,255,.09); }.local-bridge-panel[data-theme="dark"] .local-bridge-panel__tab--selected { background: rgba(110, 157, 255, .15); border-color: rgba(110,157,255,.5); }.local-bridge-panel[data-theme="dark"] .local-bridge-panel__record { background: #f3f3f5; color: #1d1d1f; }.local-bridge-panel[data-theme="dark"] .local-bridge-panel__record span { color: #68686d; }.local-bridge-panel[data-theme="dark"] .local-bridge-panel__record input { background: #e5e5e8; border-color: #d0d0d5; color: #1d1d1f; }.local-bridge-panel[data-theme="dark"] .local-bridge-panel__record button { background: #1d1d1f; color: #fff; }.local-bridge-panel[data-theme="dark"] .local-bridge-panel__record-stop { background: #ffd0cd !important; color: #841f1f !important; }
 
 @media (max-width: 720px) { .local-bridge-panel__workspace { grid-template-columns: 1fr; }.local-bridge-panel__tab-list { grid-template-columns: 1fr; }.local-bridge-panel__record { grid-template-columns: 1fr; }.local-bridge-panel__record-start { width: 100%; }.local-bridge-panel__record input { flex: 1; width: auto; } }
 @media (max-width: 420px) { .local-bridge-panel { padding: 18px; }.local-bridge-panel__header { margin-bottom: 18px; }.local-bridge-panel__eyebrow { font-size: 9px; }.local-bridge-panel__hero { padding: 16px; }.local-bridge-panel__hero-copy strong { font-size: 13px; }.local-bridge-panel__permission span { max-width: 140px; } }
