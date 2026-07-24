@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { MY_TAB_ID, sendToTab } from '../tab';
 
 type BridgeState = 'connecting' | 'connected' | 'disconnected';
-type BrowserTab = { id: number; title: string; url: string; active: boolean };
+type BrowserTab = { id: number; title: string; url: string; active: boolean; favicon: string };
 type RecordingState = { active: boolean; id?: string; tabId?: number; intent?: string; events?: number };
 type WorkflowSummary = { id: string; steps: unknown[]; checkpoints: unknown[] };
 type Locale = 'zh' | 'en';
@@ -21,7 +21,7 @@ export function LocalBridgePanel() {
   const [grantedPermissions, setGrantedPermissions] = useState<string[]>([]);
   const [updatedAt, setUpdatedAt] = useState('');
   const [locale, setLocale] = useState<Locale>('zh');
-  const [theme, setTheme] = useState<Theme>('light');
+  const [theme, setTheme] = useState<Theme>('dark');
   const chinese = locale === 'zh';
   const text = chinese ? {
     eyebrow: '本地浏览器控制', connected: '已连接', connecting: '正在连接', disconnected: '未连接', ready: '浏览器已就绪', connectingTitle: '正在连接 Chrome', unavailable: '桥接不可用', readyBody: '当前 Chrome 登录态已可供使用。', unavailableBody: '请保持 Chrome 打开并启用扩展。', target: '当前目标', noTarget: '未选择标签页', refresh: '刷新', openPage: '打开一个页面后再打开 Kv Bridge。', noUrl: '没有可用的页面 URL', updated: '已更新', waiting: '等待页面详情', pick: '选择元素', copy: '复制标签页 ID', access: '浏览器访问', enabled: '已启用', bookmarks: '书签', bookmarksDesc: '打开已保存的目的地', downloads: '下载', downloadsDesc: '读取最近下载状态', extensions: '扩展程序', extensionsDesc: '检查已安装扩展', enable: '启用', tabs: '打开的标签页', tabsHint: '选择 Agent 工具的默认目标页。', refreshList: '刷新列表', targetTag: '目标', active: '当前', noTabs: '当前窗口没有可浏览的标签页。', recorder: '工作流录制器', recording: '已在标签页', events: '记录事件', recorderHint: '记录 Agent 任务与您的手动页面操作。', intentPlaceholder: '这个工作流要完成什么？', start: '开始录制', stop: '停止录制', saved: '已保存草稿', steps: '个步骤', checkpoints: '个检查点', native: '本地消息', error: '录制请求失败。', dark: '深色模式', light: '浅色模式'
@@ -44,7 +44,7 @@ export function LocalBridgePanel() {
       chrome.tabs.query({ windowId: window.id }, (currentTabs) => {
         setTabs(currentTabs
           .filter((tab): tab is chrome.tabs.Tab & { id: number } => tab.id != null && !tab.url?.startsWith('chrome-extension://'))
-          .map((tab) => ({ id: tab.id, title: tab.title || tab.url || `Tab ${tab.id}`, url: tab.url || '', active: Boolean(tab.active) })));
+          .map((tab) => ({ id: tab.id, title: tab.title || tab.url || `Tab ${tab.id}`, url: tab.url || '', active: Boolean(tab.active), favicon: tab.favIconUrl || '' })));
       });
     });
   };
@@ -194,7 +194,7 @@ export function LocalBridgePanel() {
         <div className="local-bridge-panel__tab-list">
           {tabs.map((tab) => (
             <button key={tab.id} className={`local-bridge-panel__tab${tab.id === targetTabId ? ' local-bridge-panel__tab--selected' : ''}`} onClick={() => selectTarget(tab.id)}>
-              <i aria-hidden="true" />
+              {tab.favicon ? <img src={tab.favicon} alt="" /> : <i aria-hidden="true" />}
               <span>{tab.title}</span>
               <em>{tab.id === targetTabId ? text.targetTag : tab.active ? text.active : ''}</em>
             </button>
