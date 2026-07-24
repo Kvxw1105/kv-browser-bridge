@@ -13,9 +13,7 @@ export const MY_TAB_ID: number | null = (() => {
 /** Send a message to this panel's own tab's content script, injecting the content
  *  script + CSS on first use if it isn't loaded yet (mirrors the old SW relay,
  *  but scoped to MY_TAB_ID instead of a shared global target tab). */
-export function sendToMyTab(message: unknown, callback?: (response: unknown) => void): void {
-  if (MY_TAB_ID == null) { callback?.(null); return; }
-  const tabId = MY_TAB_ID;
+export function sendToTab(tabId: number, message: unknown, callback?: (response: unknown) => void): void {
   chrome.tabs.sendMessage(tabId, message, (response) => {
     if (chrome.runtime.lastError) {
       // Content script not injected yet — inject it, then retry once.
@@ -32,4 +30,9 @@ export function sendToMyTab(message: unknown, callback?: (response: unknown) => 
     }
     callback?.(response);
   });
+}
+
+export function sendToMyTab(message: unknown, callback?: (response: unknown) => void): void {
+  if (MY_TAB_ID == null) { callback?.(null); return; }
+  sendToTab(MY_TAB_ID, message, callback);
 }

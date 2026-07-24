@@ -64,7 +64,9 @@ export function setSelectedTab(tabId: number, sessionId = PANEL_SESSION_ID): voi
 }
 
 export function getSelectedTabId(sessionId = PANEL_SESSION_ID): number | null {
-  return selectedTabs.get(sessionId) ?? null;
+  // The control panel owns the browser-wide default; an MCP session can still
+  // override it with browser_switch_tab without affecting other sessions.
+  return selectedTabs.get(sessionId) ?? (sessionId === PANEL_SESSION_ID ? null : selectedTabs.get(PANEL_SESSION_ID) ?? null);
 }
 
 export function clearSelectedTab(tabId?: number, sessionId?: string): void {
