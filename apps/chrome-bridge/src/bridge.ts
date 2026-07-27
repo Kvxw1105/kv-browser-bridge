@@ -28,6 +28,7 @@ import {
 import { JsonlLogger } from './logger.js';
 import { NativeMessagingChannel } from './native-channel.js';
 import { nativeDisconnectErrorFor } from './native-disconnect.js';
+import { KvRuntime, runtimeMode } from './runtime.js';
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const MAX_REQUEST_TIMEOUT_MS = 5 * 60_000;
@@ -45,6 +46,7 @@ interface PendingRequest {
 class ChromeBridge {
   private readonly native = new NativeMessagingChannel();
   private readonly logger = new JsonlLogger();
+  private readonly runtime = runtimeMode() === 'legacy' ? undefined : new KvRuntime();
   private readonly startedAt = new Date().toISOString();
   private readonly instanceId = randomUUID();
   private readonly token = randomBytes(32).toString('base64url');
@@ -99,6 +101,7 @@ class ChromeBridge {
       this.pending.delete(requestId);
     }
     for (const client of this.clients) client.destroy();
+    this.runtimeSafe(() => this.runtime?.close());
     this.server?.close();
     process.exit(0);
   }
@@ -252,6 +255,13 @@ class ChromeBridge {
       return;
     }
     const clientIdentity = (socket as Socket & { kvClientId?: string }).kvClientId ?? authenticatedSessionId;
+    const action = browserActionFromTool(request.method);
+    const eventId = this.runtimeSafe(() => this.runtime?.recordRequest(
+      request.method,
+      request.params ?? {},
+      operationClassFor(action),
+      typeof request.params?.tabId === 'number' ? request.params.tabId : undefined,
+    ));
     const cacheKey = `${clientIdentity}:${request.idempotencyKey ?? request.id}`;
     if (this.idempotencyCompleted.size > 1024) {
       const now = Date.now();
@@ -269,18 +279,24 @@ class ChromeBridge {
     try {
       let execution = this.idempotencyInFlight.get(cacheKey);
       if (!execution) {
-        execution = this.forwardBrowserRequest(request.id, authenticatedSessionId, browserActionFromTool(request.method), request.params ?? {}, request.timeoutMs, request.deadlineAt);
+        execution = this.forwardBrowserRequest(request.id, authenticatedSessionId, action, request.params ?? {}, request.timeoutMs, request.deadlineAt);
         this.idempotencyInFlight.set(cacheKey, execution);
       }
       const result = await execution;
       this.idempotencyCompleted.set(cacheKey, { expiresAt: Date.now() + 30_000, result });
       if (request.method === 'browser_screenshot') this.persistScreenshotArtifact(result, request.params?.artifactPath, request.params?.artifactOnly === true);
+      this.runtimeSafe(() => {
+        this.runtime?.recordResult(eventId, result);
+        if (request.method === 'browser_screenshot' && isRecord(result)) this.runtime?.addArtifact(eventId, 'screenshot', result.artifactPath);
+        if (request.method === 'browser_record_stop') this.runtime?.saveRecipeDraft(result);
+      });
       this.writePipe(socket, { type: 'response', id: request.id, ok: true, result } satisfies PipeResponse);
     } catch (error) {
       const bridgeError = isBridgeError(error)
         ? error
         : this.error('INTERNAL_ERROR', error instanceof Error ? error.message : String(error), false);
       this.idempotencyCompleted.set(cacheKey, { expiresAt: Date.now() + 30_000, error: bridgeError });
+      this.runtimeSafe(() => this.runtime?.recordResult(eventId, undefined, bridgeError));
       this.writePipe(socket, { type: 'response', id: request.id, ok: false, error: bridgeError } satisfies PipeResponse);
     } finally {
       this.idempotencyInFlight.delete(cacheKey);
@@ -323,6 +339,14 @@ class ChromeBridge {
       const bridgeError = this.error('NATIVE_PROTOCOL_ERROR', error instanceof Error ? error.message : String(error), true);
       this.recordError(bridgeError);
       throw bridgeError;
+    }
+  }
+
+  private runtimeSafe<T>(write: () => T): T | undefined {
+    try { return write(); }
+    catch (error) {
+      this.logger.write('warn', 'runtime.shadow_failed', { message: error instanceof Error ? error.message : String(error) });
+      return undefined;
     }
   }
 
