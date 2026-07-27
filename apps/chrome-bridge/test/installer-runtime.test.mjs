@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 process.env.KV_BRIDGE_TEST = '1';
-const { doctor, install, pathsForInstall, uninstall } = await import('../dist/install.js');
+const { doctor, install, pathsForInstall, testInstall, testRestore, uninstall } = await import('../dist/install.js');
 const { createKvWrapper, createNativeHostManifest } = await import('../dist/install-helpers.js');
 
 function fakeFs(initial = {}) {
@@ -154,4 +154,19 @@ test('doctor reports structured required failures without registry access', () =
   assert.equal(report.ok, false);
   assert.equal(report.checks.find((item) => item.name === 'registry-hkcu').ok, false);
   assert.equal(report.checks.find((item) => item.name === 'bridge-pipe').required, false);
+});
+
+test('Shadow test install backs up and restores the existing Kv registration', () => {
+  const paths = pathsForInstall(base);
+  const want = expected(paths);
+  const fs = fakeFs({ [paths.bridge]: 'bridge', [paths.wrapper]: want.wrapper, [paths.manifest]: want.manifest });
+  const reg = registry({ keyExists: true, value: paths.manifest });
+  testInstall(EXTENSION_ID, { ...base, fs, runner: reg.runner });
+  assert.match(fs.files.get(paths.wrapper), /KBB_RUNTIME_MODE=shadow/);
+  assert.equal(fs.files.has(paths.testBackup), true);
+  testRestore({ ...base, fs, runner: reg.runner });
+  assert.equal(fs.files.get(paths.wrapper), want.wrapper);
+  assert.equal(fs.files.get(paths.manifest), want.manifest);
+  assert.equal(reg.state.value, paths.manifest);
+  assert.equal(fs.files.has(paths.testBackup), false);
 });

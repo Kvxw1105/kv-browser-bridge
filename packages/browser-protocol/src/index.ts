@@ -47,7 +47,7 @@ export type BrowserAction =
   | 'record_note';
 
 export type BrowserToolName = `browser_${BrowserAction}`;
-export type RuntimeToolName = 'browser_recipe_review' | 'browser_replay_start' | 'browser_replay_step' | 'browser_run_export';
+export type RuntimeToolName = 'browser_recipe_review' | 'browser_replay_start' | 'browser_replay_step' | 'browser_run_export' | 'browser_run_generate_guide';
 export type OperationClass = 'read' | 'non_idempotent_write';
 
 export interface BrowserRequest {

@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 
 import { randomBytes, randomUUID } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { dirname, isAbsolute, join } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { createServer, type Server, type Socket } from 'node:net';
 import {
   BRIDGE_PROTOCOL_VERSION,
@@ -378,6 +379,17 @@ class ChromeBridge {
         this.writePipe(socket, { type: 'response', id: request.id, ok: true, result: this.runtime.exportRunPackage(runId, directory) } satisfies PipeResponse);
         return;
       }
+      if (request.method === 'browser_run_generate_guide') {
+        const runId = typeof request.params?.runId === 'string' ? request.params.runId : this.runtime.latestRunId();
+        const directory = typeof request.params?.directory === 'string' ? request.params.directory : '';
+        if (!runId || !directory || !isAbsolute(directory)) throw this.error('INVALID_REQUEST', 'runId and an absolute directory are required', false);
+        const packageInfo = this.runtime.exportRunPackage(runId, join(resolve(directory), runId));
+        const script = resolve(import.meta.dirname, '../../../scripts/import-kv-run-package.mjs');
+        const guide = spawnSync(process.execPath, [script, packageInfo.directory], { encoding: 'utf8' });
+        if (guide.status !== 0) throw this.error('INTERNAL_ERROR', `Guide generation failed: ${guide.stderr || guide.stdout}`, false);
+        this.writePipe(socket, { type: 'response', id: request.id, ok: true, result: { package: packageInfo, guide: JSON.parse(guide.stdout) } } satisfies PipeResponse);
+        return;
+      }
       const replay = this.replay;
       if (!replay) throw this.error('INVALID_REQUEST', 'Start a replay before executing a step', false);
       const index = typeof request.params?.index === 'number' ? request.params.index : replay.nextStep;
@@ -499,8 +511,8 @@ function isBridgeError(value: unknown): value is BridgeError {
   return typeof value === 'object' && value !== null && 'code' in value && 'message' in value && 'retryable' in value;
 }
 
-function isRuntimeMethod(value: string): value is 'browser_recipe_review' | 'browser_replay_start' | 'browser_replay_step' | 'browser_run_export' {
-  return value === 'browser_recipe_review' || value === 'browser_replay_start' || value === 'browser_replay_step' || value === 'browser_run_export';
+function isRuntimeMethod(value: string): value is 'browser_recipe_review' | 'browser_replay_start' | 'browser_replay_step' | 'browser_run_export' | 'browser_run_generate_guide' {
+  return value === 'browser_recipe_review' || value === 'browser_replay_start' || value === 'browser_replay_step' || value === 'browser_run_export' || value === 'browser_run_generate_guide';
 }
 
 function isSupportedVersion(version: unknown): boolean {

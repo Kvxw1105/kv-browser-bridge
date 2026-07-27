@@ -297,6 +297,11 @@ server.tool('browser_run_export', 'Export one Runtime Run as KV_RUN_PACKAGE_V1 w
   directory: z.string().min(1).describe('Absolute output directory for the run package.'),
 }, async (params) => callBridge('browser_run_export', params));
 
+server.tool('browser_run_generate_guide', 'Export one Runtime Run and generate article.md, article.json, preview.html, and quality-report.md in one local operation.', {
+  runId: z.string().optional(),
+  directory: z.string().min(1).describe('Absolute parent directory for the exported run package and guide.'),
+}, async (params) => callBridge('browser_run_generate_guide', params));
+
 async function main(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);

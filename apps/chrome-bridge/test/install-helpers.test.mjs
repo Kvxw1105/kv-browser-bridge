@@ -25,6 +25,8 @@ test('builds a Kv-only native host manifest', () => {
 
 test('requires an explicit, valid extension ID for installation', () => {
   assert.deepEqual(parseInstallerArgs(['install', EXTENSION_ID]), { command: 'install', extensionId: EXTENSION_ID });
+  assert.deepEqual(parseInstallerArgs(['test-install', EXTENSION_ID]), { command: 'test-install', extensionId: EXTENSION_ID });
+  assert.deepEqual(parseInstallerArgs(['test-restore']), { command: 'test-restore' });
   assert.throws(() => parseInstallerArgs([]), /extension ID is required/);
   assert.throws(() => parseInstallerArgs(['install', 'ABC']), /32 lowercase letters/);
   assert.throws(() => parseInstallerArgs(['install', 'qbcdefghijklmnopabcdefghijklmnop']), /a to p/);

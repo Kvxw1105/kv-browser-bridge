@@ -46,6 +46,7 @@ export function pathsForInstall(options: { appDataDir?: string; distDir?: string
     manifest: join(appDataDir, 'Google', 'Chrome', 'User Data', 'NativeMessagingHosts', `${KV_NATIVE_HOST_NAME}.json`),
     discovery: join(appDataDir, 'KvBrowserBridge', 'bridge.json'),
     logDir: join(appDataDir, 'KvBrowserBridge', 'logs'),
+    testBackup: join(appDataDir, 'KvBrowserBridge', 'shadow-test-backup.json'),
   };
 }
 
@@ -172,6 +173,66 @@ export function uninstall(deps: { fs?: InstallerFs; runner?: RegistryRunner; app
   fs.rmSync(paths.wrapper, { force: true });
 }
 
+type TestBackup = { manifest?: string; wrapperPath?: string; wrapper?: string; registry: RegistrySnapshot };
+
+function testBackup(fs: InstallerFs, path: string): TestBackup | undefined {
+  const value = readJson(fs, path);
+  if (!value || typeof value !== 'object') return undefined;
+  const backup = value as Partial<TestBackup>;
+  if (!backup.registry || typeof backup.registry.keyExists !== 'boolean') return undefined;
+  return { manifest: typeof backup.manifest === 'string' ? backup.manifest : undefined, wrapperPath: typeof backup.wrapperPath === 'string' ? backup.wrapperPath : undefined, wrapper: typeof backup.wrapper === 'string' ? backup.wrapper : undefined, registry: backup.registry };
+}
+
+export function testInstall(extensionId: string, deps: { fs?: InstallerFs; runner?: RegistryRunner; appDataDir?: string; distDir?: string; nodePath?: string } = {}): void {
+  const fs = deps.fs ?? realFs;
+  const runner = deps.runner ?? defaultRegistryRunner;
+  const paths = pathsForInstall(deps);
+  if (fs.existsSync(paths.testBackup)) throw new Error(`A Shadow test backup already exists: ${paths.testBackup}. Run test-restore first.`);
+  validateBridgePath(paths.bridge);
+  if (!fs.existsSync(paths.bridge)) throw new Error(`Bridge build is missing: ${paths.bridge}`);
+  const currentManifest = artifactContents(fs, paths.manifest);
+  const currentParsed = readJson(fs, paths.manifest) as { path?: unknown } | undefined;
+  const currentWrapperPath = typeof currentParsed?.path === 'string' ? currentParsed.path : undefined;
+  const currentWrapper = currentWrapperPath && fs.existsSync(currentWrapperPath) ? artifactContents(fs, currentWrapperPath) : undefined;
+  if (currentManifest !== undefined && (!isValidNativeHostManifest(currentParsed) || !currentWrapper || !currentWrapper.includes('REM Kv Browser Bridge wrapper - managed by Kv'))) {
+    throw new Error('Refusing to replace a non-Kv Native Messaging registration.');
+  }
+  const registry = readRegistrySnapshot(runner, 'snapshot');
+  const backup: TestBackup = { manifest: currentManifest, wrapperPath: currentWrapperPath, wrapper: currentWrapper, registry };
+  const wrapper = createKvWrapper(paths.bridge, deps.nodePath ?? process.execPath, 'shadow');
+  const manifestContents = `${JSON.stringify(createNativeHostManifest(extensionId, paths.wrapper), null, 2)}\n`;
+  fs.mkdirSync(dirname(paths.manifest), { recursive: true });
+  fs.mkdirSync(dirname(paths.testBackup), { recursive: true });
+  atomicWriteFile(fs, paths.testBackup, JSON.stringify(backup, null, 2) + '\n');
+  try {
+    atomicWriteFile(fs, paths.wrapper, wrapper);
+    atomicWriteFile(fs, paths.manifest, manifestContents);
+    requireRegistry(runner, 'add Shadow test', ['add', registryKey, '/ve', '/t', 'REG_SZ', '/d', paths.manifest, '/f']);
+  } catch (error) {
+    fs.rmSync(paths.testBackup, { force: true });
+    throw error;
+  }
+}
+
+export function testRestore(deps: { fs?: InstallerFs; runner?: RegistryRunner; appDataDir?: string; distDir?: string; nodePath?: string } = {}): void {
+  const fs = deps.fs ?? realFs;
+  const runner = deps.runner ?? defaultRegistryRunner;
+  const paths = pathsForInstall(deps);
+  const backup = testBackup(fs, paths.testBackup);
+  if (!backup) throw new Error('No valid Shadow test backup was found.');
+  const expectedWrapper = createKvWrapper(paths.bridge, deps.nodePath ?? process.execPath, 'shadow');
+  const currentManifest = artifactContents(fs, paths.manifest);
+  const currentWrapper = artifactContents(fs, paths.wrapper);
+  const registry = readRegistrySnapshot(runner, 'restore snapshot');
+  if (currentWrapper !== expectedWrapper || registry.value !== paths.manifest || !currentManifest) throw new Error('Refusing to restore because the Shadow test registration changed.');
+  if (backup.wrapperPath && backup.wrapper) atomicWriteFile(fs, backup.wrapperPath, backup.wrapper);
+  if (backup.manifest === undefined) fs.rmSync(paths.manifest, { force: true });
+  else atomicWriteFile(fs, paths.manifest, backup.manifest);
+  if (!backup.registry.keyExists) requireRegistry(runner, 'restore delete', ['delete', registryKey, '/f']);
+  else if (backup.registry.value) requireRegistry(runner, 'restore registry', ['add', registryKey, '/ve', '/t', 'REG_SZ', '/d', backup.registry.value, '/f']);
+  fs.rmSync(paths.testBackup, { force: true });
+}
+
 export type DoctorCheck = { name: string; required: boolean; ok: boolean; message: string; details?: Record<string, unknown> };
 export type DoctorReport = { ok: boolean; checks: DoctorCheck[] };
 
@@ -210,6 +271,12 @@ function main(): void {
   } else if (command.command === 'uninstall') {
     uninstall();
     process.stdout.write('Kv Browser Bridge registration removed when it was Kv-owned.\n');
+  } else if (command.command === 'test-install') {
+    testInstall(command.extensionId);
+    process.stdout.write(`Shadow test host registered for ${command.extensionId}. Reload the test extension.\n`);
+  } else if (command.command === 'test-restore') {
+    testRestore();
+    process.stdout.write('Stable Kv Native Messaging registration restored.\n');
   } else {
     const report = doctor();
     if (command.json) process.stdout.write(`${JSON.stringify(report)}\n`);
