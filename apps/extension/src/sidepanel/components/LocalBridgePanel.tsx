@@ -17,6 +17,7 @@ export function LocalBridgePanel() {
   const [recording, setRecording] = useState<RecordingState>({ active: false });
   const [recordIntent, setRecordIntent] = useState('');
   const [recordError, setRecordError] = useState('');
+  const [nativeError, setNativeError] = useState('');
   const [lastWorkflow, setLastWorkflow] = useState<WorkflowSummary | null>(null);
   const [grantedPermissions, setGrantedPermissions] = useState<string[]>([]);
   const [updatedAt, setUpdatedAt] = useState('');
@@ -68,9 +69,10 @@ export function LocalBridgePanel() {
     const port = chrome.runtime.connect({ name: 'sidepanel' });
     void chrome.permissions.getAll().then((permissions) => setGrantedPermissions(permissions.permissions ?? []));
     if (MY_TAB_ID != null) port.postMessage({ type: '_panel_init', tabId: MY_TAB_ID });
-    port.onMessage.addListener((message: { type?: string; connected?: boolean }) => {
+    port.onMessage.addListener((message: { type?: string; connected?: boolean; error?: string }) => {
       if (message.type === '_native_status') {
         setState(message.connected ? 'connected' : 'disconnected');
+        setNativeError(message.connected ? '' : message.error ?? '');
       }
     });
     port.onDisconnect.addListener(() => setState('disconnected'));
@@ -133,6 +135,7 @@ export function LocalBridgePanel() {
         <div className="local-bridge-panel__hero-copy">
           <p>{connected ? text.ready : state === 'connecting' ? text.connectingTitle : text.unavailable}</p>
           <strong>{connected ? text.readyBody : text.unavailableBody}</strong>
+          {!connected && nativeError && <small>{text.native}: {nativeError}</small>}
         </div>
       </section>
 
