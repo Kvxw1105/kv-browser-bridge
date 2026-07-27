@@ -1,9 +1,7 @@
 # Handoff
 
-1. Build the Runtime worktree: `npm run build:local-chrome`.
-2. In `chrome://extensions`, remove the current unpacked Kv extension, load `apps/extension/dist` from this worktree, and copy its displayed extension ID.
-3. Register the reversible Shadow test host: `node apps/chrome-bridge/dist/install.js test-install <extension-id>`. Reload that test extension.
-3. Record with `browser_record_start` and `browser_record_stop`.
-4. Review with `browser_recipe_review`; replay one approved step at a time with `browser_replay_step` and `confirmWrite=true` for writes.
-5. Export with `browser_run_export`, then generate the guide with `npm run guide:run -- <package-directory>`, or use `browser_run_generate_guide` to do both locally in one command.
-6. Restore the prior Native Messaging registration with `node apps/chrome-bridge/dist/install.js test-restore`, then reload the stable unpacked extension.
+1. The Runtime Shadow acceptance run is active through unpacked extension ID `jmebeacjecpedgahpckmgaiadnmfenhe`. Keep its `apps/extension/dist` directory loaded until the next acceptance decision.
+2. Current evidence is under `artifacts/real-browser-evidence/run-261fd644-9d2d-4bd2-9436-56585cfad698`; do not delete it.
+3. To perform another read-only workflow, start and stop the recorder, review via `browser_recipe_review`, then replay one approved step at a time with `browser_replay_step`. Writes still require `confirmWrite=true`.
+4. Use `browser_run_generate_guide` for a package and guide in one local call. Verify the guide's `quality-report.md` before reporting success.
+5. Restore the prior Native Messaging registration only when Runtime acceptance is finished: `node apps/chrome-bridge/dist/install.js test-restore`, then reload the stable unpacked extension.

@@ -1,6 +1,8 @@
 # Current State
 
 - Shadow Runtime, WAL SQLite, migrations, Run Package export, Draft review, and manual replay MCP commands are coded.
-- `npm run build:local-chrome`, Runtime tests, and the synthetic Run Package to guide CLI path have passed locally.
-- Real Chrome Recorder evidence: `flow-1785177464580-zqw60k` recorded a public GitHub page URL without page mutation. Screenshot capture was blocked by an existing debugger attachment and became `SCREENSHOT_FAILED` human guidance; no screenshot artifact was produced.
-- Runtime Shadow and Recorder UI have not yet been accepted with the test Extension/Native Host loaded.
+- `npm run build:local-chrome` and `npm test` pass locally (30 Runtime/browser tests plus release checks).
+- Real Chrome Runtime Shadow acceptance completed with extension ID `jmebeacjecpedgahpckmgaiadnmfenhe`: Bridge status was `connected`, `authenticated`, `extensionConnected`, `nativeReady`, and `ready`, with `degraded=false`.
+- Recorder flow `flow-1785190512699-ruwp6g` captured a read-only GitHub repository URL, accessibility snapshot, screenshot, and note without page mutation. The reviewed Recipe Draft is revision 2.
+- Replay Run `run-9de170ec-0d92-4aaa-8148-741ca219c81d` completed after the screenshot step was retried on the active tab. Its earlier background-tab screenshot failure remains recorded as a paused-step diagnostic event.
+- Evidence Run Package `run-261fd644-9d2d-4bd2-9436-56585cfad698` contains `manifest.json`, `events.jsonl`, `recipe-draft.json`, `result.json`, and a SHA-256-verified screenshot artifact. Its guide output contains `article.md`, `article.json`, `preview.html`, and `quality-report.md` with status `pass`.
