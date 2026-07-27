@@ -253,7 +253,26 @@ server.tool('browser_record_note', 'Add a concise intent, correction, or human-g
   message: z.string().min(1).max(2_000).describe('What changed, what the user did, or why the workflow paused.'),
 }, async (params) => callBridge('browser_record_note', params));
 
-server.tool('browser_connection_status', 'Return Chrome Bridge connection and authentication status without starting a browser.', {}, async () => json(bridge.getStatus()));
+server.tool('browser_connection_status', 'Probe the existing Chrome Bridge and return its current connection and authentication status without starting a browser.', {}, async () => {
+  try {
+    // getStatus() is only a local cache. Probe first so a fresh MCP process does
+    // not report a false disconnect while its initial Named Pipe handshake runs.
+    await bridge.request('browser_connection_status');
+    return json(bridge.getStatus());
+  } catch (error) {
+    const bridgeError = error instanceof BridgeError
+      ? error
+      : new BridgeError('INTERNAL_ERROR', error instanceof Error ? error.message : String(error));
+    return json({
+      ...bridge.getStatus(),
+      probeError: {
+        code: bridgeError.code,
+        message: bridgeError.message,
+        retryable: bridgeError.retryable,
+      },
+    });
+  }
+});
 
 async function main(): Promise<void> {
   const transport = new StdioServerTransport();
