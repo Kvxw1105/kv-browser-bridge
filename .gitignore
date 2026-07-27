@@ -10,3 +10,4 @@ dist/
 claude-code-browser*.zip
 release/
 dist-web/
+graphify-out/

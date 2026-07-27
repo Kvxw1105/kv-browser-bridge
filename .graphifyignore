@@ -1,0 +1,17 @@
+# Generated, binary, private, and dependency artifacts do not describe source architecture.
+node_modules/
+dist/
+dist-web/
+release/
+artifacts/
+screenshots/
+store-assets/
+samples/
+docs/presentation/
+apps/desktop/
+apps/host/
+apps/server/
+packages/agent-core/
+skills/browse/
+.worktrees/
+.git/
