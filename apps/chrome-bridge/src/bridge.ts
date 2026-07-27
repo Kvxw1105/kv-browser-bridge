@@ -24,6 +24,7 @@ import {
   type PipeHelloAck,
   type PipeRequest,
   type PipeResponse,
+  type BrowserAction,
 } from '@kv-browser-bridge/browser-protocol';
 import { JsonlLogger } from './logger.js';
 import { NativeMessagingChannel } from './native-channel.js';
@@ -56,6 +57,7 @@ class ChromeBridge {
   private readonly idempotencyInFlight = new Map<string, Promise<unknown>>();
   private readonly idempotencyCompleted = new Map<string, { expiresAt: number; result?: unknown; error?: BridgeError }>();
   private readonly clients = new Set<Socket>();
+  private replay: { runId: string; recipe: Record<string, unknown>; nextStep: number } | undefined;
   private server: Server | undefined;
   private extensionConnected = false;
   private nativeReady = false;
@@ -250,6 +252,10 @@ class ChromeBridge {
       this.writePipe(socket, { type: 'response', id: request.id, ok: true, result: this.status() } satisfies PipeResponse);
       return;
     }
+    if (isRuntimeMethod(request.method)) {
+      await this.handleRuntimeRequest(socket, request, authenticatedSessionId);
+      return;
+    }
     if (!isBrowserToolName(request.method)) {
       this.writePipe(socket, this.pipeError(request.id, 'INVALID_REQUEST', `Unsupported browser method: ${request.method}`, false));
       return;
@@ -339,6 +345,58 @@ class ChromeBridge {
       const bridgeError = this.error('NATIVE_PROTOCOL_ERROR', error instanceof Error ? error.message : String(error), true);
       this.recordError(bridgeError);
       throw bridgeError;
+    }
+  }
+
+  private async handleRuntimeRequest(socket: Socket, request: PipeRequest, sessionId: string): Promise<void> {
+    if (!this.runtime) {
+      this.writePipe(socket, this.pipeError(request.id, 'INVALID_REQUEST', 'Set KBB_RUNTIME_MODE=shadow to use runtime tools', false));
+      return;
+    }
+    try {
+      if (request.method === 'browser_recipe_review') {
+        const change = request.params ?? {};
+        const draftId = typeof change.draftId === 'string' ? change.draftId : this.runtime.latestRecipeDraft()?.id;
+        if (typeof draftId !== 'string' || !Array.isArray(change.stepIds) || change.stepIds.some((id) => typeof id !== 'string')) throw this.error('INVALID_REQUEST', 'draftId and stepIds are required', false);
+        const result = this.runtime.reviewRecipeDraft(draftId, { type: String(change.type) as 'delete' | 'merge' | 'describe' | 'variable' | 'manual_confirm', stepIds: change.stepIds, text: typeof change.text === 'string' ? change.text : undefined, name: typeof change.name === 'string' ? change.name : undefined });
+        this.writePipe(socket, { type: 'response', id: request.id, ok: true, result } satisfies PipeResponse);
+        return;
+      }
+      if (request.method === 'browser_replay_start') {
+        const draftId = typeof request.params?.draftId === 'string' ? request.params.draftId : this.runtime.latestRecipeDraft()?.id;
+        if (typeof draftId !== 'string') throw this.error('INVALID_REQUEST', 'draftId is required', false);
+        const started = this.runtime.startReplay(draftId);
+        this.replay = { ...started, nextStep: 0 };
+        this.writePipe(socket, { type: 'response', id: request.id, ok: true, result: { runId: started.runId, steps: Array.isArray(started.recipe.steps) ? started.recipe.steps.length : 0 } } satisfies PipeResponse);
+        return;
+      }
+      if (request.method === 'browser_run_export') {
+        const runId = typeof request.params?.runId === 'string' ? request.params.runId : this.runtime.latestRunId();
+        const directory = typeof request.params?.directory === 'string' ? request.params.directory : '';
+        if (!runId || !directory || !isAbsolute(directory)) throw this.error('INVALID_REQUEST', 'runId and an absolute directory are required', false);
+        this.writePipe(socket, { type: 'response', id: request.id, ok: true, result: this.runtime.exportRunPackage(runId, directory) } satisfies PipeResponse);
+        return;
+      }
+      const replay = this.replay;
+      if (!replay) throw this.error('INVALID_REQUEST', 'Start a replay before executing a step', false);
+      const index = typeof request.params?.index === 'number' ? request.params.index : replay.nextStep;
+      const steps = Array.isArray(replay.recipe.steps) ? replay.recipe.steps.filter(isRecord) : [];
+      const step = steps[index];
+      const action = typeof step?.action === 'string' ? step.action : '';
+      if (!step || !action || action.startsWith('record_') || !isBrowserToolName(`browser_${action}`)) throw this.error('INVALID_REQUEST', `Replay step ${index + 1} is not executable`, false);
+      const browserAction = action as BrowserAction;
+      const operationClass = operationClassFor(browserAction);
+      if (operationClass === 'non_idempotent_write' && request.params?.confirmWrite !== true) throw this.error('INVALID_REQUEST', 'Replay write steps require confirmWrite=true', false);
+      const params = isRecord(step.params) ? { ...step.params } : {};
+      if (typeof params.tabId !== 'number' && typeof replay.recipe.tabId === 'number') params.tabId = replay.recipe.tabId;
+      const eventId = this.runtime.recordRequest(`browser_${action}`, params, operationClass, typeof params.tabId === 'number' ? params.tabId : undefined);
+      const result = await this.forwardBrowserRequest(request.id, sessionId, browserAction, params, request.timeoutMs, request.deadlineAt);
+      this.runtime.recordResult(eventId, result);
+      replay.nextStep = index + 1;
+      this.writePipe(socket, { type: 'response', id: request.id, ok: true, result: { runId: replay.runId, index, done: replay.nextStep >= steps.length, result } } satisfies PipeResponse);
+    } catch (error) {
+      const bridgeError = isBridgeError(error) ? error : this.error('INTERNAL_ERROR', error instanceof Error ? error.message : String(error), false);
+      this.writePipe(socket, { type: 'response', id: request.id, ok: false, error: bridgeError } satisfies PipeResponse);
     }
   }
 
@@ -437,6 +495,10 @@ function clampTimeout(value: unknown): number {
 
 function isBridgeError(value: unknown): value is BridgeError {
   return typeof value === 'object' && value !== null && 'code' in value && 'message' in value && 'retryable' in value;
+}
+
+function isRuntimeMethod(value: string): value is 'browser_recipe_review' | 'browser_replay_start' | 'browser_replay_step' | 'browser_run_export' {
+  return value === 'browser_recipe_review' || value === 'browser_replay_start' || value === 'browser_replay_step' || value === 'browser_run_export';
 }
 
 function isSupportedVersion(version: unknown): boolean {

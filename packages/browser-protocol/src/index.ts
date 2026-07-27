@@ -47,6 +47,7 @@ export type BrowserAction =
   | 'record_note';
 
 export type BrowserToolName = `browser_${BrowserAction}`;
+export type RuntimeToolName = 'browser_recipe_review' | 'browser_replay_start' | 'browser_replay_step' | 'browser_run_export';
 export type OperationClass = 'read' | 'non_idempotent_write';
 
 export interface BrowserRequest {
@@ -129,7 +130,7 @@ export interface PipeHelloAck {
 export interface PipeRequest {
   type?: 'request';
   id: string;
-  method: BrowserToolName | 'browser_connection_status';
+  method: BrowserToolName | RuntimeToolName | 'browser_connection_status';
   params?: Record<string, unknown>;
   timeoutMs?: number;
   sessionId?: string;

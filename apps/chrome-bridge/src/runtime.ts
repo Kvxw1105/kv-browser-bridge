@@ -75,6 +75,40 @@ export class KvRuntime {
     return id;
   }
 
+  latestRecipeDraft(): Record<string, unknown> | undefined {
+    const row = this.db.prepare('SELECT id, body_json FROM recipe_drafts ORDER BY created_at DESC LIMIT 1').get() as { id?: string; body_json?: string } | undefined;
+    return row?.body_json ? { id: row.id, ...JSON.parse(row.body_json) } : undefined;
+  }
+
+  reviewRecipeDraft(id: string, change: { type: 'delete' | 'merge' | 'describe' | 'variable' | 'manual_confirm'; stepIds: string[]; text?: string; name?: string }): Record<string, unknown> {
+    const row = this.db.prepare('SELECT body_json, revision FROM recipe_drafts WHERE id = ?').get(id) as { body_json?: string; revision?: number } | undefined;
+    if (!row?.body_json) throw new Error(`Unknown recipe draft: ${id}`);
+    const draft = JSON.parse(row.body_json) as Record<string, unknown>;
+    const steps = Array.isArray(draft.steps) ? draft.steps.filter(isRecord) : [];
+    const selected = new Set(change.stepIds);
+    if (!selected.size) throw new Error('Select at least one recipe step');
+    if (change.type === 'delete') draft.steps = steps.filter((step) => !selected.has(String(step.id)));
+    if (change.type === 'merge') {
+      const first = steps.find((step) => selected.has(String(step.id)));
+      if (!first) throw new Error('Recipe steps were not found');
+      first.description = change.text ?? steps.filter((step) => selected.has(String(step.id))).map((step) => String(step.action ?? '')).filter(Boolean).join(' then ');
+      draft.steps = steps.filter((step) => !selected.has(String(step.id)) || step === first);
+    }
+    if (change.type === 'describe') for (const step of steps) if (selected.has(String(step.id))) step.description = change.text ?? '';
+    if (change.type === 'variable') for (const step of steps) if (selected.has(String(step.id))) step.variable = change.name ?? change.text ?? 'value';
+    if (change.type === 'manual_confirm') for (const step of steps) if (selected.has(String(step.id))) step.manual_confirmation = true;
+    const revision = Number(row.revision ?? 0) + 1;
+    this.db.prepare('UPDATE recipe_drafts SET revision = ?, body_json = ?, created_at = ? WHERE id = ?').run(revision, stringify(scrub(draft)), this.now(), id);
+    return { id, revision, ...draft };
+  }
+
+  startReplay(recipeDraftId: string): { runId: string; recipe: Record<string, unknown> } {
+    const row = this.db.prepare('SELECT body_json FROM recipe_drafts WHERE id = ?').get(recipeDraftId) as { body_json?: string } | undefined;
+    if (!row?.body_json) throw new Error(`Unknown recipe draft: ${recipeDraftId}`);
+    const recipe = JSON.parse(row.body_json) as Record<string, unknown>;
+    return { runId: this.startRun('replay', { recipe_draft_id: recipeDraftId }), recipe };
+  }
+
   addArtifact(eventId: string | undefined, kind: string, path: unknown): string | undefined {
     if (this.mode !== 'shadow' || !this.activeRunId || typeof path !== 'string' || !isAbsolute(path) || !existsSync(path)) return undefined;
     const id = `artifact-${randomUUID()}`;

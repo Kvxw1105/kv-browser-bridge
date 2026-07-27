@@ -39,3 +39,17 @@ test('runtime snapshots a pre-migration database before adding its schema', () =
     assert.equal(existsSync(join(root, 'runtime.sqlite.before-v1.bak')), true);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test('recipe review persists variables and starts an independent replay run', () => {
+  const root = mkdtempSync(join(tmpdir(), 'kv-runtime-review-'));
+  try {
+    const runtime = new KvRuntime({ root, mode: 'shadow' });
+    runtime.saveRecipeDraft({ id: 'recipe-review', version: 1, steps: [{ id: 'step-1', action: 'click' }], checkpoints: [] });
+    const reviewed = runtime.reviewRecipeDraft('recipe-review', { type: 'variable', stepIds: ['step-1'], name: 'date_range' });
+    assert.equal(reviewed.steps[0].variable, 'date_range');
+    const replay = runtime.startReplay('recipe-review');
+    assert.match(replay.runId, /^run-/);
+    assert.equal(replay.recipe.steps[0].variable, 'date_range');
+    runtime.close();
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});

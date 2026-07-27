@@ -274,6 +274,29 @@ server.tool('browser_record_note', 'Add a concise intent, correction, or human-g
   message: z.string().min(1).max(2_000).describe('What changed, what the user did, or why the workflow paused.'),
 }, async (params) => callBridge('browser_record_note', params));
 
+server.tool('browser_recipe_review', 'Apply one explicit review change to the latest recorded recipe draft.', {
+  draftId: z.string().optional(),
+  type: z.enum(['delete', 'merge', 'describe', 'variable', 'manual_confirm']),
+  stepIds: z.array(z.string()).min(1),
+  text: z.string().max(2_000).optional(),
+  name: z.string().max(120).optional(),
+}, async (params) => callBridge('browser_recipe_review', params));
+
+server.tool('browser_replay_start', 'Create an independent replay Run from a reviewed recipe draft. Replay executes no browser step until browser_replay_step is called.', {
+  draftId: z.string().optional(),
+}, async (params) => callBridge('browser_replay_start', params));
+
+server.tool('browser_replay_step', 'Execute exactly one replay recipe step. Every write requires confirmWrite=true and each failure leaves replay paused.', {
+  index: z.number().int().min(0).optional(),
+  confirmWrite: z.literal(true).optional(),
+  timeoutMs: z.number().int().positive().max(120_000).optional(),
+}, async ({ timeoutMs, ...params }) => callBridge('browser_replay_step', params, timeoutMs));
+
+server.tool('browser_run_export', 'Export one Runtime Run as KV_RUN_PACKAGE_V1 with relative artifacts and SHA-256 hashes.', {
+  runId: z.string().optional(),
+  directory: z.string().min(1).describe('Absolute output directory for the run package.'),
+}, async (params) => callBridge('browser_run_export', params));
+
 async function main(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
