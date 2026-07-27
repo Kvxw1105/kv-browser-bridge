@@ -54,3 +54,21 @@ test('recipe review persists variables and starts an independent replay run', ()
     runtime.close();
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test('shadow runtime resumes event recording after a replay run completes', () => {
+  const root = mkdtempSync(join(tmpdir(), 'kv-runtime-resume-'));
+  try {
+    const runtime = new KvRuntime({ root, mode: 'shadow' });
+    runtime.saveRecipeDraft({ id: 'recipe-resume', version: 1, steps: [{ id: 'step-1', action: 'get_url' }], checkpoints: [] });
+    const replay = runtime.startReplay('recipe-resume');
+    runtime.finishRun();
+    const shadowRun = runtime.resumeShadowRun();
+    const eventId = runtime.recordRequest('browser_get_url', { tabId: 7 }, 'read', 7);
+    runtime.recordResult(eventId, { url: 'https://example.test/' });
+    runtime.finishRun();
+    const packageInfo = runtime.exportRunPackage(shadowRun, join(root, 'package'));
+    runtime.close();
+    assert.notEqual(shadowRun, replay.runId);
+    assert.match(readFileSync(join(packageInfo.directory, 'events.jsonl'), 'utf8'), /browser_get_url/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});

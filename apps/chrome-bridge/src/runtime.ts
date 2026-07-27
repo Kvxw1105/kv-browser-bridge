@@ -53,6 +53,11 @@ export class KvRuntime {
     this.activeRunId = undefined;
   }
 
+  resumeShadowRun(): string | undefined {
+    if (this.mode !== 'shadow') return undefined;
+    return this.activeRunId ?? this.startRun('shadow');
+  }
+
   recordRequest(method: string, params: Record<string, unknown>, operationClass: OperationClass, tabId?: number): string | undefined {
     if (this.mode !== 'shadow' || !this.activeRunId) return undefined;
     const id = `event-${randomUUID()}`;

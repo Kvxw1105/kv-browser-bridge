@@ -409,6 +409,7 @@ class ChromeBridge {
        const done = replay.nextStep >= steps.length;
        if (done) {
          this.runtime.finishRun('completed');
+         this.runtime.resumeShadowRun();
          this.replay = undefined;
        }
        this.writePipe(socket, { type: 'response', id: request.id, ok: true, result: { runId: replay.runId, index, done, result } } satisfies PipeResponse);
