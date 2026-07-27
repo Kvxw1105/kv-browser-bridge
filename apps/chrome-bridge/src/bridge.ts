@@ -403,10 +403,15 @@ class ChromeBridge {
       const params = isRecord(step.params) ? { ...step.params } : {};
       if (typeof params.tabId !== 'number' && typeof replay.recipe.tabId === 'number') params.tabId = replay.recipe.tabId;
       replayEventId = this.runtime.recordRequest(`browser_${action}`, params, operationClass, typeof params.tabId === 'number' ? params.tabId : undefined);
-      const result = await this.forwardBrowserRequest(request.id, sessionId, browserAction, params, request.timeoutMs, request.deadlineAt);
-      this.runtime.recordResult(replayEventId, result);
-      replay.nextStep = index + 1;
-      this.writePipe(socket, { type: 'response', id: request.id, ok: true, result: { runId: replay.runId, index, done: replay.nextStep >= steps.length, result } } satisfies PipeResponse);
+       const result = await this.forwardBrowserRequest(request.id, sessionId, browserAction, params, request.timeoutMs, request.deadlineAt);
+       this.runtime.recordResult(replayEventId, result);
+       replay.nextStep = index + 1;
+       const done = replay.nextStep >= steps.length;
+       if (done) {
+         this.runtime.finishRun('completed');
+         this.replay = undefined;
+       }
+       this.writePipe(socket, { type: 'response', id: request.id, ok: true, result: { runId: replay.runId, index, done, result } } satisfies PipeResponse);
     } catch (error) {
       const bridgeError = isBridgeError(error) ? error : this.error('INTERNAL_ERROR', error instanceof Error ? error.message : String(error), false);
       this.runtimeSafe(() => this.runtime?.recordResult(replayEventId, undefined, bridgeError));

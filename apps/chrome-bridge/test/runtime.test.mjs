@@ -24,6 +24,7 @@ test('shadow runtime writes a redacted run package with recipe and artifact evid
     assert.match(readFileSync(join(root, 'package', 'events.jsonl'), 'utf8'), /\[redacted\]/);
     assert.equal(JSON.parse(readFileSync(join(root, 'package', 'recipe-draft.json'), 'utf8')).id, 'recipe-1');
     assert.equal(JSON.parse(readFileSync(join(root, 'package', 'manifest.json'), 'utf8')).artifacts[0].path.startsWith('artifacts/'), true);
+    assert.equal(JSON.parse(readFileSync(join(root, 'package', 'result.json'), 'utf8')).status, 'completed');
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
