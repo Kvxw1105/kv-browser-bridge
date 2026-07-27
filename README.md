@@ -78,6 +78,25 @@ Generic MCP client or Claude Code configuration example:
 
 See the [MCP client compatibility matrix](docs/compatibility.md) for the supported configuration scopes and WorkBuddy's conditional status.
 
+## Codex Skill
+
+The canonical Codex Skill is kept in this repository at
+[`skills/kv-browser-bridge/SKILL.md`](skills/kv-browser-bridge/SKILL.md). It tells
+Codex to prefer Kv Browser Bridge for the user's existing Chrome, use targeted
+page reads to control token usage, and preserve the bridge's connection and
+publish-protection boundaries. It contains no account, cookie, token, extension
+ID, or machine-specific path.
+
+After installing the bridge and registering its MCP server on another Windows
+machine, install the same canonical Skill with:
+
+```powershell
+.\scripts\install-codex-skill.ps1
+```
+
+The installer will not replace a different existing local Skill unless the user
+explicitly passes `-Force` after reviewing that file.
+
 ## Security boundaries
 
 - Chrome shows its debugging indicator when the `debugger` permission is active.
@@ -107,4 +126,9 @@ npm run check:local-chrome
 
 ## Legacy directories
 
-`apps/host`, `apps/server`, `apps/desktop`, `packages/agent-core`, and `skills` are retained legacy code from the prior product. They are not part of the Kv Browser Bridge path. The active Kv path is `apps/extension`, `apps/chrome-bridge`, `apps/codex-mcp-server`, and `packages/browser-protocol`.
+`apps/host`, `apps/server`, `apps/desktop`, `packages/agent-core`, and the legacy
+Skill directories under `skills` are retained from the prior product. They are
+not part of the Kv Browser Bridge runtime. `skills/kv-browser-bridge` is the
+canonical Codex Skill for this product. The active Kv runtime path is
+`apps/extension`, `apps/chrome-bridge`, `apps/codex-mcp-server`, and
+`packages/browser-protocol`.
