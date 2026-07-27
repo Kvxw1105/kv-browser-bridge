@@ -353,6 +353,7 @@ class ChromeBridge {
       this.writePipe(socket, this.pipeError(request.id, 'INVALID_REQUEST', 'Set KBB_RUNTIME_MODE=shadow to use runtime tools', false));
       return;
     }
+    let replayEventId: string | undefined;
     try {
       if (request.method === 'browser_recipe_review') {
         const change = request.params ?? {};
@@ -389,13 +390,14 @@ class ChromeBridge {
       if (operationClass === 'non_idempotent_write' && request.params?.confirmWrite !== true) throw this.error('INVALID_REQUEST', 'Replay write steps require confirmWrite=true', false);
       const params = isRecord(step.params) ? { ...step.params } : {};
       if (typeof params.tabId !== 'number' && typeof replay.recipe.tabId === 'number') params.tabId = replay.recipe.tabId;
-      const eventId = this.runtime.recordRequest(`browser_${action}`, params, operationClass, typeof params.tabId === 'number' ? params.tabId : undefined);
+      replayEventId = this.runtime.recordRequest(`browser_${action}`, params, operationClass, typeof params.tabId === 'number' ? params.tabId : undefined);
       const result = await this.forwardBrowserRequest(request.id, sessionId, browserAction, params, request.timeoutMs, request.deadlineAt);
-      this.runtime.recordResult(eventId, result);
+      this.runtime.recordResult(replayEventId, result);
       replay.nextStep = index + 1;
       this.writePipe(socket, { type: 'response', id: request.id, ok: true, result: { runId: replay.runId, index, done: replay.nextStep >= steps.length, result } } satisfies PipeResponse);
     } catch (error) {
       const bridgeError = isBridgeError(error) ? error : this.error('INTERNAL_ERROR', error instanceof Error ? error.message : String(error), false);
+      this.runtimeSafe(() => this.runtime?.recordResult(replayEventId, undefined, bridgeError));
       this.writePipe(socket, { type: 'response', id: request.id, ok: false, error: bridgeError } satisfies PipeResponse);
     }
   }
