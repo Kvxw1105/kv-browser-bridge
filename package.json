@@ -15,10 +15,11 @@
     "apps/*"
   ],
   "scripts": {
-    "test": "npm run test:branding && npm run test:identity-setup && npm run test:local-chrome && node --test test/release-engineering.test.mjs",
+    "test": "npm run test:branding && npm run test:identity-setup && npm run test:runtime-discovery && npm run test:local-chrome && node --test test/release-engineering.test.mjs",
     "check": "npm run check:local-chrome && node scripts/check-versions.mjs",
     "package": "npm run build:extension && node scripts/package-extension.mjs",
     "release-check": "npm run test && npm run check && npm run package && node scripts/validate-npm-pack.mjs",
+    "discover:network-runtime": "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/discover-network-runtime.ps1",
     "generate:network-identities": "node scripts/network-identity-setup.mjs",
     "dev": "turbo dev",
     "build": "turbo build",
@@ -35,6 +36,7 @@
     "test:local-chrome": "npm run build -w packages/browser-protocol -w apps/chrome-bridge -w apps/codex-mcp-server && node --test packages/browser-protocol/test/*.test.mjs apps/chrome-bridge/test/*.test.mjs apps/codex-mcp-server/test/*.test.mjs",
     "test:branding": "node --test test/branding.test.mjs",
     "test:identity-setup": "node --test test/network-identity-setup.test.mjs",
+    "test:runtime-discovery": "node --test test/windows-network-runtime-discovery.test.mjs",
     "dev:host": "npm run dev -w apps/host",
     "dev:desktop": "npm run dev -w apps/desktop",
     "dev:web": "npm run build -w packages/shared -w packages/agent-core && concurrently -n server,web -c blue,green \"npm run dev -w apps/server\" \"npm run dev:web -w apps/desktop\"",
