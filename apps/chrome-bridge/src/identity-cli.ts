@@ -7,7 +7,7 @@ import { buildLaunchPlan } from './identity/launch-plan.js';
 import { validateManifest } from './identity/health.js';
 import type { IdentityManifest, RuntimeReceipt } from './identity/model.js';
 import { buildNetworkLeakAcceptanceReport, writeNetworkLeakAcceptanceReport } from './identity/network-leak-report.js';
-import { readNetworkIdentityRecord, recordNetworkObservation, resetNetworkIdentityRecord } from './identity/network-observation.js';
+import { freezeNetworkIdentityRecord, readNetworkIdentityRecord, recordNetworkObservation, resetNetworkIdentityRecord } from './identity/network-observation.js';
 import { probeProxyEndpoint } from './identity/network-preflight.js';
 import { defaultRuntimeRoot, runtimePaths } from './identity/paths.js';
 import { IdentityRuntime } from './identity/session.js';
@@ -142,8 +142,9 @@ async function verifyNetworkLeaks(
   });
   const reportPath = writeNetworkLeakAcceptanceReport(rootDir, report);
   if (!report.ready) {
+    const frozenNetwork = freezeNetworkIdentityRecord(rootDir, manifest.identityId, report.blockedReasons);
     const stopped = runtime.stop(manifest);
-    return { ok: false, evidence, report, reportPath, stopped, error: { code: 'NETWORK_LEAK_ACCEPTANCE_FAILED', message: 'Identity browser was stopped because network leak acceptance did not pass.' } };
+    return { ok: false, evidence, report, reportPath, network: frozenNetwork, stopped, error: { code: 'NETWORK_LEAK_ACCEPTANCE_FAILED', message: 'Identity browser was frozen and stopped because network leak acceptance did not pass.' } };
   }
   return { ok: true, evidence, report, reportPath };
 }
