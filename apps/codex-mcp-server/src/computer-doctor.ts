@@ -54,7 +54,7 @@ export function finalizeReport(checks: DoctorCheck[], serverPath: string, nodePa
   };
 }
 
-async function run(): Promise<ComputerDoctorReport> {
+export async function runComputerDoctor(): Promise<ComputerDoctorReport> {
   const moduleDir = dirname(fileURLToPath(import.meta.url));
   const serverPath = resolve(moduleDir, 'computer-server.js');
   const checks: DoctorCheck[] = [];
@@ -112,7 +112,7 @@ async function run(): Promise<ComputerDoctorReport> {
 }
 
 async function main(): Promise<void> {
-  const report = await run();
+  const report = await runComputerDoctor();
   const json = process.argv.includes('--json');
   if (json) {
     process.stdout.write(`${JSON.stringify(report)}\n`);
