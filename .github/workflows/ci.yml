@@ -21,3 +21,10 @@ jobs:
       - run: npm run check
       - run: npm run package
       - run: node scripts/validate-npm-pack.mjs
+      - run: npm run package-computer-use-rc
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kv-computer-use-runtime-rc
+          path: release/kv-computer-use-runtime-rc-v*/
+          if-no-files-found: error
+          retention-days: 14
