@@ -12,7 +12,20 @@ const receipt = (actionId, status = 'completed') => ({
   finishedAt: new Date().toISOString(),
   driver: 'windows-uia',
   status,
-  verification: { status: status === 'completed' ? 'passed' : 'failed' },
+  result: {
+    action: 'set_value_ref',
+    windowHandle: 42,
+    targetRef: 'uia:1.2.3',
+    valueSet: true,
+    currentValue: 'top-secret-value',
+    postObservation: {
+      elements: [{ name: 'Password', value: 'top-secret-value' }],
+    },
+  },
+  verification: {
+    status: status === 'completed' ? 'passed' : 'failed',
+    evidence: { expected: 'top-secret-value', actual: 'top-secret-value' },
+  },
 });
 
 test('persists, lists, and finds action receipts', async () => {
@@ -26,8 +39,33 @@ test('persists, lists, and finds action receipts', async () => {
     assert.deepEqual(recent.map((item) => item.actionId), ['a-2', 'a-1']);
     assert.equal((await store.find('a-1')).status, 'completed');
     assert.equal(await store.find('missing'), undefined);
-    const lines = (await readFile(path, 'utf8')).trim().split(/\r?\n/);
+    const contents = await readFile(path, 'utf8');
+    const lines = contents.trim().split(/\r?\n/);
     assert.equal(lines.length, 2);
+    assert.equal(contents.includes('top-secret-value'), false);
+    assert.equal(contents.includes('postObservation'), false);
+    const saved = JSON.parse(lines[0]);
+    assert.deepEqual(saved.result, {
+      action: 'set_value_ref',
+      windowHandle: 42,
+      targetRef: 'uia:1.2.3',
+      valueSet: true,
+    });
+    assert.deepEqual(saved.verification, { status: 'passed' });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('full detail mode is explicit and preserves the original receipt', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'kv-receipts-full-'));
+  try {
+    const path = join(dir, 'receipts.jsonl');
+    const store = new ReceiptStore(path, 'full');
+    await store.append(receipt('full-1'));
+    const contents = await readFile(path, 'utf8');
+    assert.equal(contents.includes('top-secret-value'), true);
+    assert.equal(contents.includes('postObservation'), true);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
