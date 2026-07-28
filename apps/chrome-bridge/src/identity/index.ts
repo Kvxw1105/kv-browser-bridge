@@ -7,6 +7,7 @@ export * from './receipt.js';
 export * from './process-adapter.js';
 export * from './network-preflight.js';
 export * from './browser-network-probe.js';
+export * from './browser-leak-probe.js';
 export * from './network-observation.js';
 export * from './network-leak-report.js';
 export * from './session.js';
