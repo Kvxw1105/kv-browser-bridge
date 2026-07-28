@@ -5,24 +5,69 @@ on:
   pull_request:
 
 jobs:
-  release-check:
+  preflight:
     runs-on: windows-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Capture runner diagnostics
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Path artifacts -Force | Out-Null
+          @(
+            "timestamp=$([DateTimeOffset]::UtcNow.ToString('o'))"
+            "runner_os=$env:RUNNER_OS"
+            "runner_arch=$env:RUNNER_ARCH"
+            "workspace=$env:GITHUB_WORKSPACE"
+            "commit=$(git rev-parse HEAD)"
+            "node=$(node --version)"
+            "npm=$(npm --version)"
+            "dotnet=$(dotnet --version)"
+          ) | Set-Content -LiteralPath artifacts/preflight.txt -Encoding utf8
+          Get-ChildItem -LiteralPath .github/workflows,scripts,apps/codex-mcp-server,apps/windows-uia-driver -Recurse -File |
+            Select-Object -ExpandProperty FullName |
+            Set-Content -LiteralPath artifacts/file-list.txt -Encoding utf8
+      - name: Upload preflight diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kv-computer-use-ci-preflight
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 7
+
+  release-check:
+    needs: preflight
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-      - uses: actions/setup-dotnet@v4
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 8.0.x
-      - run: npm ci
-      - run: npm run test
-      - run: npm run check
-      - run: npm run package
-      - run: node scripts/validate-npm-pack.mjs
-      - run: npm run package-computer-use-rc
-      - uses: actions/upload-artifact@v4
+      - name: Install dependencies
+        run: npm ci
+      - name: Run tests
+        run: npm run test
+      - name: Run type and version checks
+        run: npm run check
+      - name: Package extension
+        run: npm run package
+      - name: Validate npm packages
+        run: node scripts/validate-npm-pack.mjs
+      - name: Package Computer Use Alpha RC
+        run: npm run package-computer-use-rc
+      - name: Upload Computer Use Alpha RC
+        uses: actions/upload-artifact@v4
         with:
           name: kv-computer-use-runtime-rc
           path: release/kv-computer-use-runtime-rc-v*/
