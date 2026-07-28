@@ -46,6 +46,7 @@
     "doctor-local-chrome": "node apps/chrome-bridge/dist/install.js doctor --json",
     "prepare-computer-use": "npm run build:local-chrome",
     "doctor-computer-use": "node apps/codex-mcp-server/dist/computer-doctor.js --json",
+    "status-computer-use": "node apps/codex-mcp-server/dist/computer-status.js --json",
     "install-computer-use-codex": "npm run prepare-computer-use && node apps/codex-mcp-server/dist/codex-install.js install",
     "uninstall-computer-use-codex": "node apps/codex-mcp-server/dist/codex-install.js uninstall",
     "status-computer-use-codex": "node apps/codex-mcp-server/dist/codex-install.js status",
