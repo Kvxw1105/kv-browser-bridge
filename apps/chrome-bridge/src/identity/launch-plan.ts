@@ -15,7 +15,11 @@ export interface LaunchPlan {
   blockedReasons: string[];
 }
 
-export function buildLaunchPlan(manifest: IdentityManifest, env: NodeJS.ProcessEnv = process.env): LaunchPlan {
+export function buildLaunchPlan(
+  manifest: IdentityManifest,
+  env: NodeJS.ProcessEnv = process.env,
+  runtimeSessionId?: string,
+): LaunchPlan {
   const health = validateManifest(manifest);
   const blockedReasons = health.findings
     .filter((finding) => finding.severity === 'error')
@@ -42,17 +46,20 @@ export function buildLaunchPlan(manifest: IdentityManifest, env: NodeJS.ProcessE
   if (manifest.policies.ipv6 === 'disabled') args.push('--disable-ipv6');
   args.push('about:blank');
 
+  const launchEnv: Record<string, string> = {
+    TZ: manifest.environment.timezone,
+    LANG: manifest.environment.locale,
+    KV_BROWSER_IDENTITY_ID: manifest.identityId,
+    KV_BROWSER_WORKSPACE_ID: manifest.workspaceId,
+    KV_BROWSER_PLATFORM: manifest.platform,
+  };
+  if (runtimeSessionId) launchEnv.KV_BROWSER_RUNTIME_SESSION_ID = runtimeSessionId;
+
   return {
     identityId: manifest.identityId,
     executablePath: manifest.browser.executablePath,
     args,
-    env: {
-      TZ: manifest.environment.timezone,
-      LANG: manifest.environment.locale,
-      KV_BROWSER_IDENTITY_ID: manifest.identityId,
-      KV_BROWSER_WORKSPACE_ID: manifest.workspaceId,
-      KV_BROWSER_PLATFORM: manifest.platform,
-    },
+    env: launchEnv,
     proxyAuth: { mode: authMode, username: manifest.proxy.username, passwordEnv: manifest.proxy.passwordEnv },
     blockedReasons: [...new Set(blockedReasons)],
   };
