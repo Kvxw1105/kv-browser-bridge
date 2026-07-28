@@ -28,6 +28,7 @@
     "build:server": "npm run build -w apps/server",
     "build:host": "npm run build -w apps/host",
     "build:windows-uia": "dotnet build apps/windows-uia-driver/Kv.WindowsUia.Driver.csproj -c Release --nologo",
+    "publish:windows-uia": "dotnet publish apps/windows-uia-driver/Kv.WindowsUia.Driver.csproj -c Release -o apps/windows-uia-driver/publish --no-restore --nologo",
     "build:bridge": "npm run build -w packages/browser-protocol -w apps/chrome-bridge",
     "build:codex-mcp": "npm run build -w apps/codex-mcp-server",
     "build:local-chrome": "npm run build:bridge && npm run build:codex-mcp && npm run build:windows-uia && npm run build:extension",
@@ -49,6 +50,7 @@
     "uninstall-computer-use-codex": "node apps/codex-mcp-server/dist/codex-install.js uninstall",
     "status-computer-use-codex": "node apps/codex-mcp-server/dist/codex-install.js status",
     "smoke-computer-use": "powershell -ExecutionPolicy Bypass -File scripts/smoke-computer-use.ps1",
+    "package-computer-use-rc": "npm run build:local-chrome && npm run publish:windows-uia && node scripts/package-computer-use-rc.mjs",
     "install-host": "npm run build -w apps/host && node apps/host/dist/install.js install",
     "uninstall-host": "node apps/host/dist/install.js uninstall"
   },
