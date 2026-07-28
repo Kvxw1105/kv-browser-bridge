@@ -1,3 +1,4 @@
+import type { BridgeStatus } from './bridge-client.js';
 import type { IdentitySessionSummary } from './identity-registry.js';
 
 export interface SelectedIdentityState {
@@ -16,6 +17,19 @@ export function publicIdentitySession(summary: IdentitySessionSummary): Record<s
     discoveryPresent: summary.discoveryPresent,
     selectable: summary.processAlive && summary.discoveryPresent,
   };
+}
+
+export function publicSelectedIdentity(state: SelectedIdentityState): Record<string, unknown> | null {
+  if (!state.identityId) return null;
+  return {
+    identityId: state.identityId,
+    selectedAt: state.selectedAt,
+  };
+}
+
+export function publicBridgeClientStatus(status: BridgeStatus, identitySelected: boolean): Record<string, unknown> {
+  const { endpoint: _privateEndpoint, ...safe } = status;
+  return identitySelected ? safe : status;
 }
 
 export function bridgeIdentityId(status: unknown): string | undefined {
