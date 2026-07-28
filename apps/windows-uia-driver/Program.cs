@@ -317,11 +317,13 @@ internal static class Program
             var runtimeId = element.GetRuntimeId();
             string? value = null;
             var canInvoke = element.TryGetCurrentPattern(InvokePattern.Pattern, out _);
-            var canSetValue = element.TryGetCurrentPattern(ValuePattern.Pattern, out var rawValuePattern)
-                && rawValuePattern is ValuePattern valuePattern;
-            if (canSetValue)
+            ValuePattern? valuePattern = null;
+            if (element.TryGetCurrentPattern(ValuePattern.Pattern, out var rawValuePattern))
+                valuePattern = rawValuePattern as ValuePattern;
+            var canSetValue = valuePattern is not null;
+            if (valuePattern is not null)
             {
-                try { value = valuePattern!.Current.Value; }
+                try { value = valuePattern.Current.Value; }
                 catch (InvalidOperationException) { value = null; }
             }
             return new ElementObservation(
