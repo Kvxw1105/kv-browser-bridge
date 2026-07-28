@@ -5,7 +5,8 @@
   "type": "module",
   "bin": {
     "kv-browser-bridge": "./dist/bridge.js",
-    "kv-browser-bridge-install": "./dist/install.js"
+    "kv-browser-bridge-install": "./dist/install.js",
+    "kv-browser-identity": "./dist/identity-cli.js"
   },
   "scripts": {
     "build": "tsc",
