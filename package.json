@@ -43,6 +43,8 @@
     "install-local-chrome": "npm run build:local-chrome && node apps/chrome-bridge/dist/install.js install",
     "uninstall-local-chrome": "node apps/chrome-bridge/dist/install.js uninstall",
     "doctor-local-chrome": "node apps/chrome-bridge/dist/install.js doctor --json",
+    "prepare-computer-use": "npm run build:local-chrome",
+    "doctor-computer-use": "node apps/codex-mcp-server/dist/computer-doctor.js --json",
     "install-host": "npm run build -w apps/host && node apps/host/dist/install.js install",
     "uninstall-host": "node apps/host/dist/install.js uninstall"
   },
