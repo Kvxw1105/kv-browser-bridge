@@ -1,0 +1,23 @@
+{
+  "chromeExecutablePath": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+  "baseProfileDir": "D:\\KvBrowserBridge\\profiles",
+  "locale": "zh-CN",
+  "timezone": "Asia/Shanghai",
+  "countryCode": "CN",
+  "disableIpv6": true,
+  "timeoutMs": 20000,
+  "publicIpProbeUrl": "https://api.ipify.org?format=json",
+  "ipv6ProbeUrl": "https://api6.ipify.org?format=json",
+  "identities": [
+    {
+      "identityId": "account-a-xhs",
+      "accountLabel": "小红书账号 A",
+      "proxyPort": 17891
+    },
+    {
+      "identityId": "account-b-xhs",
+      "accountLabel": "小红书账号 B",
+      "proxyPort": 17892
+    }
+  ]
+}
