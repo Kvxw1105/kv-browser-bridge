@@ -4,6 +4,8 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { isAbsolute } from 'node:path';
 import { z } from 'zod/v4';
 import { BridgeClient, BridgeError } from './bridge-client.js';
+import { listIdentitySessions, resolveIdentityDiscovery } from './identity-registry.js';
+import { assertSelectedBridge, publicIdentitySession, type SelectedIdentityState } from './identity-selection.js';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const requestTimeoutMs = Number.parseInt(process.env.LOCAL_CHROME_REQUEST_TIMEOUT_MS ?? '', 10) || DEFAULT_TIMEOUT_MS;
@@ -15,6 +17,7 @@ function log(event: string, fields: Record<string, unknown> = {}): void {
 
 const bridge = new BridgeClient({ requestTimeoutMs, log });
 const server = new McpServer({ name: 'kv-browser-bridge', version: '0.1.0' });
+let selectedIdentity: SelectedIdentityState = {};
 
 const tabId = z.number().int().positive().optional().describe('Target Chrome tab ID. Uses the Bridge-selected tab when omitted.');
 const locator = {
@@ -40,14 +43,76 @@ function bridgeErrorResult(error: unknown) {
   };
 }
 
+async function requestBridge(method: string, params: Record<string, unknown> = {}, timeoutMs?: number): Promise<unknown> {
+  if (selectedIdentity.identityId) {
+    const status = await bridge.request('browser_connection_status');
+    assertSelectedBridge(selectedIdentity.identityId, status);
+  }
+  return bridge.request(method, params, timeoutMs);
+}
+
 async function callBridge(method: string, params: Record<string, unknown> = {}, timeoutMs?: number) {
-  log('tool_request', { method });
+  log('tool_request', { method, identityId: selectedIdentity.identityId });
   try {
-    return json(await bridge.request(method, params, timeoutMs));
+    return json(await requestBridge(method, params, timeoutMs));
   } catch (error) {
     return bridgeErrorResult(error);
   }
 }
+
+server.tool('browser_identity_sessions', 'List running identity-bound Chrome sessions without exposing Bridge bearer tokens or Named Pipe endpoints.', {}, async () => {
+  try {
+    const sessions = await listIdentitySessions();
+    return json({
+      selectedIdentityId: selectedIdentity.identityId,
+      sessions: sessions.map(publicIdentitySession),
+    });
+  } catch (error) {
+    return bridgeErrorResult(error);
+  }
+});
+
+server.tool('browser_select_identity', 'Select one running browser identity. Later browser tools are locked to the selected Bridge and fail closed on an identity mismatch.', {
+  identityId: z.string().regex(/^[a-z0-9][a-z0-9-]{2,63}$/).describe('Exact identityId returned by browser_identity_sessions.'),
+}, async ({ identityId }) => {
+  const previousConfig = process.env.KV_BROWSER_BRIDGE_CONFIG;
+  const previousSelection = selectedIdentity;
+  try {
+    const discoveryPath = await resolveIdentityDiscovery(identityId);
+    process.env.KV_BROWSER_BRIDGE_CONFIG = discoveryPath;
+    selectedIdentity = { identityId, discoveryPath, selectedAt: new Date().toISOString() };
+    await bridge.close();
+    const status = await bridge.request('browser_connection_status');
+    assertSelectedBridge(identityId, status);
+    log('identity_selected', { identityId });
+    return json({ selectedIdentity, bridge: status });
+  } catch (error) {
+    selectedIdentity = previousSelection;
+    if (previousConfig === undefined) delete process.env.KV_BROWSER_BRIDGE_CONFIG;
+    else process.env.KV_BROWSER_BRIDGE_CONFIG = previousConfig;
+    await bridge.close();
+    return bridgeErrorResult(error);
+  }
+});
+
+server.tool('browser_selected_identity', 'Return the currently selected browser identity and its verified Bridge status.', {}, async () => {
+  try {
+    if (!selectedIdentity.identityId) return json({ selectedIdentity: null, mode: 'legacy-default' });
+    const status = await bridge.request('browser_connection_status');
+    assertSelectedBridge(selectedIdentity.identityId, status);
+    return json({ selectedIdentity, bridge: status });
+  } catch (error) {
+    return bridgeErrorResult(error);
+  }
+});
+
+server.tool('browser_clear_identity', 'Leave identity routing and return to the original default single-Chrome Bridge discovery behavior.', {}, async () => {
+  delete process.env.KV_BROWSER_BRIDGE_CONFIG;
+  selectedIdentity = {};
+  await bridge.close();
+  log('identity_cleared');
+  return json({ selectedIdentity: null, mode: 'legacy-default' });
+});
 
 server.tool('browser_get_tabs', 'List the tabs in the currently connected Chrome instance.', {}, async () => callBridge('browser_get_tabs'));
 
@@ -128,9 +193,9 @@ server.tool('browser_screenshot', 'Capture a PNG screenshot from an existing Chr
   artifactPath: z.string().min(1).optional().describe('Optional absolute path where the Bridge should save the PNG.'),
   artifactOnly: z.boolean().optional().describe('When used with artifactPath, save the PNG without returning inline base64 image data.'),
 }, async (params) => {
-  log('tool_request', { method: 'browser_screenshot' });
+  log('tool_request', { method: 'browser_screenshot', identityId: selectedIdentity.identityId });
   try {
-    const result = await bridge.request('browser_screenshot', params) as { dataUrl?: string; data?: string; base64?: string; mimeType?: string; artifactPath?: string };
+    const result = await requestBridge('browser_screenshot', params) as { dataUrl?: string; data?: string; base64?: string; mimeType?: string; artifactPath?: string };
     const raw = result.data ?? result.base64 ?? result.dataUrl?.replace(/^data:[^;]+;base64,/, '');
     const content: Array<{ type: 'image'; data: string; mimeType: string } | { type: 'text'; text: string }> = [];
     if (raw) content.push({ type: 'image', data: raw, mimeType: result.mimeType ?? 'image/png' });
@@ -236,18 +301,18 @@ server.tool('browser_get_element_styles', 'Inspect a CSS or XPath target and ret
 
 server.tool('browser_page_metrics', 'Return bounded Chrome performance and layout metrics for a tab.', { ...{ tabId } }, async (params) => callBridge('browser_page_metrics', params));
 
-server.tool('browser_connection_status', 'Probe the existing Chrome Bridge and return its current connection and authentication status without starting a browser.', {}, async () => {
+server.tool('browser_connection_status', 'Probe the selected identity Bridge, or the original default Bridge when no identity is selected.', {}, async () => {
   try {
-    // getStatus() is only a local cache. Probe first so a fresh MCP process does
-    // not report a false disconnect while its initial Named Pipe handshake runs.
-    await bridge.request('browser_connection_status');
-    return json(bridge.getStatus());
+    const status = await bridge.request('browser_connection_status');
+    if (selectedIdentity.identityId) assertSelectedBridge(selectedIdentity.identityId, status);
+    return json({ ...bridge.getStatus(), selectedIdentity: selectedIdentity.identityId ? selectedIdentity : null, bridge: status });
   } catch (error) {
     const bridgeError = error instanceof BridgeError
       ? error
       : new BridgeError('INTERNAL_ERROR', error instanceof Error ? error.message : String(error));
     return json({
       ...bridge.getStatus(),
+      selectedIdentity: selectedIdentity.identityId ? selectedIdentity : null,
       probeError: {
         code: bridgeError.code,
         message: bridgeError.message,
@@ -261,7 +326,7 @@ async function main(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   log('mcp_started', { requestTimeoutMs });
-  // Connecting is intentionally best-effort. Codex can still call browser_connection_status while the Bridge starts.
+  // Connecting is intentionally best-effort. Identity selection can occur even when the default Bridge is absent.
   void bridge.request('browser_connection_status').catch(() => undefined);
 }
 
