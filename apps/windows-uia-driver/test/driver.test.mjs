@@ -119,10 +119,13 @@ test('controls a real Windows form through UI Automation', { timeout: 45_000 }, 
     assert.equal(observed.ok, true);
     const input = observed.result.elements.find((element) => element.automationId === 'InputField');
     const apply = observed.result.elements.find((element) => element.automationId === 'ApplyButton');
+    const resultLabel = observed.result.elements.find((element) => element.automationId === 'ResultLabel');
     assert.ok(input?.ref, 'input should expose a stable UIA reference');
     assert.equal(input.canSetValue, true);
     assert.ok(apply?.ref, 'button should expose a stable UIA reference');
     assert.equal(apply.canInvoke, true);
+    assert.ok(resultLabel?.ref, 'result label should expose a stable UIA reference');
+    assert.equal(resultLabel.name, 'Waiting');
 
     const value = 'runtime-e2e-value';
     const setResult = await session.request('set_value_ref', {
@@ -140,11 +143,19 @@ test('controls a real Windows form through UI Automation', { timeout: 45_000 }, 
     });
     assert.equal(invokeResult.ok, true);
 
-    const appliedWindow = await waitFor(async () => {
-      const result = await session.request('observe', { maxWindows: 100, maxElements: 5, maxDepth: 1 });
-      return result.result.windows.find((candidate) => candidate.handle === window.handle && candidate.name.endsWith(`Applied:${value}`));
-    }, 'button invocation did not update the real window');
-    assert.equal(appliedWindow.handle, window.handle);
+    const appliedLabel = await waitFor(async () => {
+      const result = await session.request('observe', {
+        windowHandle: window.handle,
+        maxWindows: 100,
+        maxElements: 50,
+        maxDepth: 6,
+      });
+      assert.equal(result.ok, true);
+      return result.result.elements.find((element) => (
+        element.automationId === 'ResultLabel' && element.name === `Applied:${value}`
+      ));
+    }, 'button invocation did not update the real result label');
+    assert.equal(appliedLabel.ref, resultLabel.ref);
   } finally {
     form.kill();
     await once(form, 'exit').catch(() => undefined);
