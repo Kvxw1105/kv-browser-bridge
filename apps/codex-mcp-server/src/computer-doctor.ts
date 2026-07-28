@@ -19,6 +19,7 @@ export type ComputerDoctorReport = {
   generatedAt: string;
   checks: DoctorCheck[];
   mcpConfig: ReturnType<typeof buildMcpConfig>;
+  codexToml: string;
 };
 
 export function buildMcpConfig(serverPath: string, nodePath = process.execPath) {
@@ -31,12 +32,25 @@ export function buildMcpConfig(serverPath: string, nodePath = process.execPath) 
   };
 }
 
+export function buildCodexToml(serverPath: string, nodePath = process.execPath): string {
+  const escape = (value: string) => value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  return [
+    '[mcp_servers.kv-computer-use]',
+    `command = "${escape(nodePath)}"`,
+    `args = ["${escape(serverPath)}"]`,
+    'env = { LOCAL_CHROME_REQUEST_TIMEOUT_MS = "30000" }',
+    'startup_timeout_ms = 20000',
+    '',
+  ].join('\n');
+}
+
 export function finalizeReport(checks: DoctorCheck[], serverPath: string, nodePath = process.execPath): ComputerDoctorReport {
   return {
     ok: checks.filter((item) => item.required).every((item) => item.ok),
     generatedAt: new Date().toISOString(),
     checks,
     mcpConfig: buildMcpConfig(serverPath, nodePath),
+    codexToml: buildCodexToml(serverPath, nodePath),
   };
 }
 
@@ -107,6 +121,7 @@ async function main(): Promise<void> {
       process.stdout.write(`${item.ok ? 'OK' : item.required ? 'FAIL' : 'INFO'} ${item.name}: ${item.message}\n`);
     }
     process.stdout.write(`MCP_CONFIG ${JSON.stringify(report.mcpConfig)}\n`);
+    process.stdout.write(`CODEX_TOML_BEGIN\n${report.codexToml}CODEX_TOML_END\n`);
   }
   if (!report.ok) process.exitCode = 1;
 }
