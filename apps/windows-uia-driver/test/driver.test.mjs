@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 
 const driver = join(process.cwd(), 'apps', 'windows-uia-driver', 'bin', 'Release', 'net8.0-windows', 'kv-windows-uia-driver.dll');
 const harness = join(process.cwd(), 'apps', 'windows-uia-driver', 'test', 'fixtures', 'uia-harness.ps1');
+const runInteractiveE2e = process.env.KV_RUN_UIA_E2E === '1';
 
 async function request(method, params = {}) {
   const session = startDriver();
@@ -95,7 +96,7 @@ test('returns a bounded Windows observation envelope', async () => {
   assert.ok(response.result.elements.length <= 10);
 });
 
-test('controls a real Windows form through UI Automation', { timeout: 45_000 }, async () => {
+test('controls a real Windows form through UI Automation', { timeout: 45_000, skip: !runInteractiveE2e }, async () => {
   const resultPath = join(tmpdir(), `kv-uia-result-${process.pid}-${Date.now()}.txt`);
   const form = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', harness], {
     stdio: ['ignore', 'pipe', 'pipe'],
