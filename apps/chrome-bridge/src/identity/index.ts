@@ -8,3 +8,4 @@ export * from './process-adapter.js';
 export * from './session.js';
 export * from './store.js';
 export * from './bridge-context.js';
+export * from './windows-doctor.js';
