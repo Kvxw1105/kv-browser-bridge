@@ -4,6 +4,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod/v4';
 import { BridgeClient } from './bridge-client.js';
 import { BrowserComputerRuntime } from './computer-runtime.js';
+import { WindowsUiaClient } from './windows-uia-client.js';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const requestTimeoutMs = Number.parseInt(process.env.LOCAL_CHROME_REQUEST_TIMEOUT_MS ?? '', 10) || DEFAULT_TIMEOUT_MS;
@@ -12,13 +13,21 @@ const log = (event: string, fields: Record<string, unknown> = {}) => {
 };
 
 const bridge = new BridgeClient({ requestTimeoutMs, log });
-const runtime = new BrowserComputerRuntime(bridge);
-const server = new McpServer({ name: 'kv-computer-use', version: '0.1.0' });
+const windows = new WindowsUiaClient(Math.min(requestTimeoutMs, 30_000));
+const runtime = new BrowserComputerRuntime(bridge, windows);
+const server = new McpServer({ name: 'kv-computer-use', version: '0.2.0' });
 const json = (result: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] });
 
-server.tool('computer_runtime_status', 'Return installed and planned Computer Use drivers plus Chrome Bridge health.', {}, async () => json(runtime.status()));
-server.tool('computer_observe', 'Observe the connected Chrome instance through the unified Computer Use observation contract.', {}, async () => json(await runtime.observe()));
-server.tool('computer_execute', 'Execute one policy-checked Computer Use action and return a verification receipt.', {
+server.tool('computer_runtime_status', 'Return installed Computer Use drivers and health for Chrome Bridge and Windows UIA.', {}, async () => json(await runtime.status()));
+server.tool('computer_observe', 'Observe Chrome and the Windows desktop through one read-only Computer Use contract.', {
+  browser: z.boolean().optional().describe('Include Chrome tabs. Defaults to true.'),
+  windows: z.boolean().optional().describe('Include Windows UIA observations. Defaults to true when the sidecar is built.'),
+  windowHandle: z.number().int().positive().optional().describe('Optional native window handle to inspect instead of the foreground window.'),
+  maxWindows: z.number().int().min(1).max(100).optional(),
+  maxElements: z.number().int().min(1).max(2_000).optional(),
+  maxDepth: z.number().int().min(0).max(20).optional(),
+}, async (params) => json(await runtime.observe(params)));
+server.tool('computer_execute', 'Execute one policy-checked browser action and return a verification receipt. Windows UIA remains read-only.', {
   actionId: z.string().min(1),
   action: z.object({
     type: z.string().min(1),
@@ -47,5 +56,7 @@ void main().catch((error) => {
 });
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-  process.once(signal, () => void bridge.close());
+  process.once(signal, () => {
+    void Promise.all([bridge.close(), runtime.close()]);
+  });
 }
