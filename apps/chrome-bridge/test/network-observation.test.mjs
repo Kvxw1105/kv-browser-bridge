@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { listNetworkIdentityRecords, readNetworkIdentityRecord, recordNetworkObservation, resetNetworkIdentityRecord } from '../dist/identity/network-observation.js';
+import { freezeNetworkIdentityRecord, listNetworkIdentityRecords, readNetworkIdentityRecord, recordNetworkObservation, resetNetworkIdentityRecord } from '../dist/identity/network-observation.js';
 
 const at = '2026-07-29T12:00:00.000Z';
 const now = () => new Date(at);
@@ -33,6 +33,16 @@ test('freezes both identities when their recent public IP collides', () => {
   const first = readNetworkIdentityRecord(root, 'account-a');
   assert.equal(first.state, 'frozen');
   assert.deepEqual(first.collisionWith, ['account-b']);
+});
+
+test('freezes a verified record with leak reasons while preserving prior evidence', () => {
+  const root = mkdtempSync(join(tmpdir(), 'kv-net-'));
+  recordNetworkObservation(root, 'account-a', observation('1.1.1.1'), { now });
+  const frozen = freezeNetworkIdentityRecord(root, 'account-a', ['DNS_ROUTE_MISMATCH', 'WEBRTC_LEAK_DETECTED', 'DNS_ROUTE_MISMATCH'], now);
+  assert.equal(frozen.state, 'frozen');
+  assert.equal(frozen.publicIp, '1.1.1.1');
+  assert.deepEqual(frozen.reasons, ['DNS_ROUTE_MISMATCH', 'WEBRTC_LEAK_DETECTED']);
+  assert.equal(readNetworkIdentityRecord(root, 'account-a').state, 'frozen');
 });
 
 test('ignores stale observations outside the collision window', () => {
