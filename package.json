@@ -15,8 +15,8 @@
     "apps/*"
   ],
   "scripts": {
-    "test": "npm run test:branding && npm run test:local-chrome && npm run test:identity && node --test test/release-engineering.test.mjs",
-    "check": "npm run check:local-chrome && npm run check:identity && node scripts/check-versions.mjs",
+    "test": "npm run test:branding && npm run test:local-chrome && node --test test/release-engineering.test.mjs",
+    "check": "npm run check:local-chrome && node scripts/check-versions.mjs",
     "package": "npm run build:extension && node scripts/package-extension.mjs",
     "release-check": "npm run test && npm run check && npm run package && node scripts/validate-npm-pack.mjs",
     "dev": "turbo dev",
@@ -29,12 +29,9 @@
     "build:host": "npm run build -w apps/host",
     "build:bridge": "npm run build -w packages/browser-protocol -w apps/chrome-bridge",
     "build:codex-mcp": "npm run build -w apps/codex-mcp-server",
-    "build:identity": "npm run build -w apps/identity-runtime",
     "build:local-chrome": "npm run build:bridge && npm run build:codex-mcp && npm run build:extension",
     "check:local-chrome": "npm run build -w packages/shared && npm run build:local-chrome && npx tsc -p apps/chrome-bridge/tsconfig.json --noEmit && npx tsc -p apps/codex-mcp-server/tsconfig.json --noEmit && npx tsc -p apps/extension/tsconfig.json --noEmit",
-    "check:identity": "npm run build:identity && npx tsc -p apps/identity-runtime/tsconfig.json --noEmit",
     "test:local-chrome": "npm run build -w packages/browser-protocol -w apps/chrome-bridge -w apps/codex-mcp-server && node --test packages/browser-protocol/test/*.test.mjs apps/chrome-bridge/test/*.test.mjs apps/codex-mcp-server/test/*.test.mjs",
-    "test:identity": "npm run test -w apps/identity-runtime",
     "test:branding": "node --test test/branding.test.mjs",
     "dev:host": "npm run dev -w apps/host",
     "dev:desktop": "npm run dev -w apps/desktop",
