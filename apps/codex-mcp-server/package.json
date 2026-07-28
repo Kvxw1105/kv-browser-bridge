@@ -7,14 +7,18 @@
   "bin": {
     "kv-browser-bridge-mcp": "./dist/server.js",
     "kv-computer-use-mcp": "./dist/computer-server.js",
-    "kv-computer-use-doctor": "./dist/computer-doctor.js"
+    "kv-computer-use-doctor": "./dist/computer-doctor.js",
+    "kv-computer-use-codex": "./dist/codex-install.js"
   },
   "scripts": {
     "build": "tsc",
     "check": "tsc --noEmit",
     "dev": "tsx src/server.ts",
     "dev:computer": "tsx src/computer-server.ts",
-    "doctor:computer": "node dist/computer-doctor.js --json"
+    "doctor:computer": "node dist/computer-doctor.js --json",
+    "codex:status": "node dist/codex-install.js status",
+    "codex:install": "node dist/codex-install.js install",
+    "codex:uninstall": "node dist/codex-install.js uninstall"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.28.0",
