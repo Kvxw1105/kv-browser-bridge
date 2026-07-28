@@ -117,6 +117,25 @@ export function recordNetworkObservation(
   return record;
 }
 
+export function freezeNetworkIdentityRecord(
+  rootDir: string,
+  identityId: string,
+  reasons: string[],
+  now: () => Date = () => new Date(),
+): NetworkIdentityRecord | undefined {
+  const record = readNetworkIdentityRecord(rootDir, identityId);
+  if (!record) return undefined;
+  const normalizedReasons = reasons.map((reason) => reason.trim()).filter(Boolean);
+  const frozen: NetworkIdentityRecord = {
+    ...record,
+    state: 'frozen',
+    reasons: [...new Set([...record.reasons, ...normalizedReasons])],
+    updatedAt: now().toISOString(),
+  };
+  writeRecord(rootDir, frozen);
+  return frozen;
+}
+
 export function resetNetworkIdentityRecord(rootDir: string, identityId: string, now: () => Date = () => new Date()): { reset: boolean; archivedPath?: string } {
   const path = networkRecordPath(rootDir, identityId);
   if (!existsSync(path)) return { reset: false };
