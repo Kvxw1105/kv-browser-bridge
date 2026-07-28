@@ -28,8 +28,15 @@ export function publicSelectedIdentity(state: SelectedIdentityState): Record<str
 }
 
 export function publicBridgeClientStatus(status: BridgeStatus, identitySelected: boolean): Record<string, unknown> {
+  if (!identitySelected) return status;
   const { endpoint: _privateEndpoint, ...safe } = status;
-  return identitySelected ? safe : status;
+  return safe;
+}
+
+export function publicBridgeStatus(status: unknown, identitySelected: boolean): unknown {
+  if (!identitySelected || typeof status !== 'object' || status === null || Array.isArray(status)) return status;
+  const { pipeName: _privatePipeName, ...safe } = status as Record<string, unknown>;
+  return safe;
 }
 
 export function bridgeIdentityId(status: unknown): string | undefined {
