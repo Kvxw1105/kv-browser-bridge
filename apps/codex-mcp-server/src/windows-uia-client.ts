@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url';
 export type WindowsUiaStatus = {
   available: boolean;
   executable?: string;
+  mode?: string;
+  capabilities?: string[];
   error?: { code: string; message: string };
 };
 
@@ -21,9 +23,19 @@ export type WindowsUiaObservation = {
   truncated: boolean;
 };
 
+export type WindowsUiaActionResult = {
+  action: 'focus_window' | 'invoke_ref' | 'set_value_ref';
+  windowHandle: number;
+  targetRef?: string;
+  foregroundWindowHandle?: number;
+  valueSet?: boolean;
+  currentValue?: string;
+  element?: unknown;
+};
+
 type Pending = {
   resolve: (value: unknown) => void;
-  reject: (error: Error) => void;
+  reject: (error: WindowsUiaError) => void;
   timer: NodeJS.Timeout;
 };
 
@@ -33,6 +45,17 @@ type SidecarResponse = {
   result?: unknown;
   error?: { code?: string; message?: string; retryable?: boolean };
 };
+
+export class WindowsUiaError extends Error {
+  constructor(
+    public readonly code: string,
+    message: string,
+    public readonly retryable = false,
+  ) {
+    super(message);
+    this.name = 'WindowsUiaError';
+  }
+}
 
 export class WindowsUiaClient {
   private process: ChildProcessWithoutNullStreams | null = null;
@@ -46,8 +69,13 @@ export class WindowsUiaClient {
   async status(): Promise<WindowsUiaStatus> {
     try {
       await this.ensureStarted();
-      await this.request('status', {});
-      return { available: true, executable: this.executable };
+      const status = await this.request('status', {}) as { mode?: string; capabilities?: string[] };
+      return {
+        available: true,
+        executable: this.executable,
+        mode: status.mode,
+        capabilities: status.capabilities,
+      };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.lastError = { code: 'WINDOWS_UIA_UNAVAILABLE', message };
@@ -59,12 +87,24 @@ export class WindowsUiaClient {
     return await this.request('observe', params) as WindowsUiaObservation;
   }
 
+  async focusWindow(windowHandle: number): Promise<WindowsUiaActionResult> {
+    return await this.request('focus_window', { windowHandle }) as WindowsUiaActionResult;
+  }
+
+  async invokeRef(params: { windowHandle?: number; targetRef: string; maxSearchElements?: number; maxSearchDepth?: number }): Promise<WindowsUiaActionResult> {
+    return await this.request('invoke_ref', params) as WindowsUiaActionResult;
+  }
+
+  async setValueRef(params: { windowHandle?: number; targetRef: string; value: string; maxSearchElements?: number; maxSearchDepth?: number }): Promise<WindowsUiaActionResult> {
+    return await this.request('set_value_ref', params) as WindowsUiaActionResult;
+  }
+
   async close(): Promise<void> {
     this.process?.kill();
     this.process = null;
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timer);
-      pending.reject(new Error('Windows UIA sidecar closed.'));
+      pending.reject(new WindowsUiaError('WINDOWS_UIA_CLOSED', 'Windows UIA sidecar closed.', true));
     }
     this.pending.clear();
   }
@@ -91,12 +131,12 @@ export class WindowsUiaClient {
 
   private async request(method: string, params: Record<string, unknown>): Promise<unknown> {
     await this.ensureStarted();
-    if (!this.process || this.process.killed) throw new Error('Windows UIA sidecar is not running.');
+    if (!this.process || this.process.killed) throw new WindowsUiaError('WINDOWS_UIA_NOT_RUNNING', 'Windows UIA sidecar is not running.', true);
     const id = crypto.randomUUID();
     return await new Promise<unknown>((resolvePromise, rejectPromise) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        rejectPromise(new Error(`${method} exceeded ${this.timeoutMs}ms.`));
+        rejectPromise(new WindowsUiaError('WINDOWS_UIA_TIMEOUT', `${method} exceeded ${this.timeoutMs}ms.`, true));
       }, this.timeoutMs);
       this.pending.set(id, { resolve: resolvePromise, reject: rejectPromise, timer });
       this.process!.stdin.write(`${JSON.stringify({ id, method, params })}\n`);
@@ -124,7 +164,11 @@ export class WindowsUiaClient {
       clearTimeout(pending.timer);
       this.pending.delete(response.id);
       if (response.ok) pending.resolve(response.result);
-      else pending.reject(new Error(response.error?.message ?? 'Windows UIA request failed.'));
+      else pending.reject(new WindowsUiaError(
+        response.error?.code ?? 'WINDOWS_UIA_REQUEST_FAILED',
+        response.error?.message ?? 'Windows UIA request failed.',
+        response.error?.retryable ?? false,
+      ));
     }
   }
 
@@ -134,7 +178,7 @@ export class WindowsUiaClient {
     this.lastError = { code: 'WINDOWS_UIA_EXITED', message };
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timer);
-      pending.reject(new Error(message));
+      pending.reject(new WindowsUiaError('WINDOWS_UIA_EXITED', message, true));
     }
     this.pending.clear();
   }
