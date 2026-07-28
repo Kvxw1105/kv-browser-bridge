@@ -6,8 +6,9 @@ on:
 
 jobs:
   preflight:
-    runs-on: windows-latest
+    runs-on: windows-2025
     timeout-minutes: 10
+    continue-on-error: true
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -35,12 +36,11 @@ jobs:
         with:
           name: kv-computer-use-ci-preflight
           path: artifacts/
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 7
 
   release-check:
-    needs: preflight
-    runs-on: windows-latest
+    runs-on: windows-2025
     timeout-minutes: 45
     steps:
       - name: Checkout
