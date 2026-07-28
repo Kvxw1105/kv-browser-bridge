@@ -8,6 +8,35 @@ export const NATIVE_MESSAGE_MAX_BYTES = 1024 * 1024;
 export const NATIVE_CHUNK_MAX_BYTES = 384 * 1024;
 export const PIPE_LINE_MAX_BYTES = 1024 * 1024;
 
+export interface BridgeIdentity {
+  identityId: string;
+  workspaceId?: string;
+  platform?: string;
+  runtimeSessionId?: string;
+}
+
+export interface BridgeReadyMessage {
+  type: 'bridge:ready';
+  protocolVersion: number;
+  identity?: BridgeIdentity;
+}
+
+export interface ExtensionHelloMessage {
+  type: 'extension:hello';
+  protocolVersion: number;
+  extensionId: string;
+  extensionVersion: string;
+  identity?: BridgeIdentity;
+  userAgent?: string;
+}
+
+export interface ExtensionHandshakeStatus {
+  acknowledgedAt: string;
+  extensionId: string;
+  extensionVersion: string;
+  userAgent?: string;
+}
+
 export type BrowserAction =
   | 'get_tabs'
   | 'new_tab'
@@ -93,10 +122,7 @@ export interface NativeChunk {
   data: string;
 }
 
-export type NativeMessage = BrowserRequest | BrowserResponse | NativeChunk | {
-  type: 'bridge:ready';
-  protocolVersion: number;
-} | {
+export type NativeMessage = BrowserRequest | BrowserResponse | NativeChunk | BridgeReadyMessage | ExtensionHelloMessage | {
   type: 'ping';
 } | {
   type: 'pong';
@@ -159,6 +185,8 @@ export interface BridgeConnectionStatus {
   instanceId?: string;
   generation?: number;
   nativeReady?: boolean;
+  identity?: BridgeIdentity;
+  extensionHandshake?: ExtensionHandshakeStatus;
 }
 
 export function operationClassFor(action: BrowserAction): OperationClass {
@@ -176,6 +204,7 @@ export interface BridgeDiscovery {
   token: string;
   pid: number;
   startedAt: string;
+  identity?: BridgeIdentity;
 }
 
 export function browserActionFromTool(method: BrowserToolName): BrowserAction {
@@ -200,6 +229,21 @@ export function isBrowserResponse(value: unknown): value is BrowserResponse {
   return isRecord(value)
     && value.type === 'browser:response'
     && typeof value.requestId === 'string';
+}
+
+export function isBridgeIdentity(value: unknown): value is BridgeIdentity {
+  if (!isRecord(value) || typeof value.identityId !== 'string' || !/^[a-z0-9][a-z0-9-]{2,63}$/.test(value.identityId)) return false;
+  return ['workspaceId', 'platform', 'runtimeSessionId'].every((field) => value[field] === undefined || typeof value[field] === 'string');
+}
+
+export function isExtensionHello(value: unknown): value is ExtensionHelloMessage {
+  return isRecord(value)
+    && value.type === 'extension:hello'
+    && typeof value.protocolVersion === 'number'
+    && typeof value.extensionId === 'string'
+    && typeof value.extensionVersion === 'string'
+    && (value.identity === undefined || isBridgeIdentity(value.identity))
+    && (value.userAgent === undefined || typeof value.userAgent === 'string');
 }
 
 export function isPipeHello(value: unknown): value is PipeHello {
