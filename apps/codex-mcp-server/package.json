@@ -6,13 +6,15 @@
   "type": "module",
   "bin": {
     "kv-browser-bridge-mcp": "./dist/server.js",
-    "kv-computer-use-mcp": "./dist/computer-server.js"
+    "kv-computer-use-mcp": "./dist/computer-server.js",
+    "kv-computer-use-doctor": "./dist/computer-doctor.js"
   },
   "scripts": {
     "build": "tsc",
     "check": "tsc --noEmit",
     "dev": "tsx src/server.ts",
-    "dev:computer": "tsx src/computer-server.ts"
+    "dev:computer": "tsx src/computer-server.ts",
+    "doctor:computer": "node dist/computer-doctor.js --json"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.28.0",
