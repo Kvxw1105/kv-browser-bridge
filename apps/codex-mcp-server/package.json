@@ -5,12 +5,12 @@
   "description": "Standalone stdio MCP server for a locally connected Chrome Bridge.",
   "type": "module",
   "bin": {
-    "kv-browser-bridge-mcp": "./dist/server.js"
+    "kv-browser-bridge-mcp": "./dist/guarded-server.js"
   },
   "scripts": {
     "build": "tsc",
     "check": "tsc --noEmit",
-    "dev": "tsx src/server.ts"
+    "dev": "tsx src/guarded-server.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.28.0",
