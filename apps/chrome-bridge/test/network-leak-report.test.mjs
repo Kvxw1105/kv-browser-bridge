@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { buildNetworkLeakAcceptanceReport, writeNetworkLeakAcceptanceReport } from '../dist/identity/network-leak-report.js';
+import { buildNetworkLeakAcceptanceReport, normalizeWebRtcObservations, writeNetworkLeakAcceptanceReport } from '../dist/identity/network-leak-report.js';
 
 const base = {
   identityId: 'huicelang-xhs',
@@ -29,15 +29,24 @@ test('passes only when public egress DNS WebRTC and IPv6 observations satisfy th
   assert.equal(report.ipv6.status, 'pass');
 });
 
+test('normalizes ICE candidate strings into stable type and address evidence', () => {
+  assert.deepEqual(normalizeWebRtcObservations([
+    'candidate:1 1 UDP 2122260223 192.168.1.23 54321 typ host generation 0',
+    'candidate:2 1 UDP 1686052607 203.0.113.10 60000 typ srflx raddr 0.0.0.0 rport 0',
+    'candidate:3 1 UDP 2122260223 abcdef.local 50000 typ host generation 0',
+  ]), ['host:192.168.1.23', 'host:mdns', 'srflx:203.0.113.10']);
+});
+
 test('fails closed when DNS or WebRTC observations contain unexpected routes', () => {
   const report = buildNetworkLeakAcceptanceReport({
     ...base,
     dnsResolvers: ['8.8.8.8'],
-    webrtcCandidates: ['192.168.1.23', '203.0.113.10'],
+    webrtcCandidates: ['candidate:1 1 UDP 2122260223 192.168.1.23 54321 typ host generation 0'],
   });
   assert.equal(report.ready, false);
   assert.ok(report.blockedReasons.includes('DNS_ROUTE_MISMATCH'));
   assert.ok(report.blockedReasons.includes('WEBRTC_LEAK_DETECTED'));
+  assert.deepEqual(report.webrtc.observed, ['host:192.168.1.23']);
 });
 
 test('fails closed when disabled IPv6 is observed or evidence is absent', () => {
