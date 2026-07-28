@@ -12,16 +12,12 @@ export default defineConfig({
         const dist = resolve(__dirname, 'dist');
         if (!existsSync(dist)) mkdirSync(dist, { recursive: true });
 
-        // Copy manifest.json
         copyFileSync(resolve(__dirname, 'manifest.json'), resolve(dist, 'manifest.json'));
-
-        // Copy element-picker.css (content script CSS)
         copyFileSync(
           resolve(__dirname, 'src/content/element-picker.css'),
           resolve(dist, 'element-picker.css'),
         );
 
-        // Copy icon PNGs from public/
         const publicDir = resolve(__dirname, 'public');
         if (existsSync(publicDir)) {
           for (const file of ['icon-16.png', 'icon-48.png', 'icon-128.png']) {
@@ -29,7 +25,6 @@ export default defineConfig({
             if (existsSync(src)) copyFileSync(src, resolve(dist, file));
           }
         }
-
       },
     },
   ],
@@ -40,7 +35,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         sidepanel: resolve(__dirname, 'sidepanel.html'),
-        'service-worker': resolve(__dirname, 'src/background/service-worker.ts'),
+        'privacy-service-worker': resolve(__dirname, 'src/background/privacy-service-worker.ts'),
         'content-script': resolve(__dirname, 'src/content/content-script.ts'),
       },
       output: {
