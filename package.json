@@ -48,6 +48,7 @@
     "install-computer-use-codex": "npm run prepare-computer-use && node apps/codex-mcp-server/dist/codex-install.js install",
     "uninstall-computer-use-codex": "node apps/codex-mcp-server/dist/codex-install.js uninstall",
     "status-computer-use-codex": "node apps/codex-mcp-server/dist/codex-install.js status",
+    "smoke-computer-use": "powershell -ExecutionPolicy Bypass -File scripts/smoke-computer-use.ps1",
     "install-host": "npm run build -w apps/host && node apps/host/dist/install.js install",
     "uninstall-host": "node apps/host/dist/install.js uninstall"
   },
