@@ -133,7 +133,10 @@ export class BrowserComputerRuntime {
       return { status: passed ? 'passed' : 'failed', evidence: { expected, actual: observation.foregroundWindowHandle, observationId: observation.observationId } };
     }
     if (postcondition.kind === 'value_equals') {
-      const targetRef = postcondition.targetRef ?? ('targetRef' in envelope.action ? envelope.action.targetRef : undefined);
+      const actionTargetRef = 'targetRef' in envelope.action && typeof envelope.action.targetRef === 'string'
+        ? envelope.action.targetRef
+        : undefined;
+      const targetRef = postcondition.targetRef ?? actionTargetRef;
       const expected = postcondition.value ?? ('value' in envelope.action && typeof envelope.action.value === 'string' ? envelope.action.value : undefined);
       const element = findElement(observation.elements, targetRef);
       const actual = element?.value;
