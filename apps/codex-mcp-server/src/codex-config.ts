@@ -8,23 +8,47 @@ export type ManagedConfigEdit = {
   installed: boolean;
 };
 
-export function renderCodexBlock(serverPath: string, nodePath = process.execPath, newline = '\n'): string {
+export type CodexLaunchOptions = {
+  driverPath?: string;
+  requestTimeoutMs?: number;
+  startupTimeoutMs?: number;
+};
+
+export function renderCodexBlock(
+  serverPath: string,
+  nodePath = process.execPath,
+  newline = '\n',
+  options: CodexLaunchOptions = {},
+): string {
+  const env: Record<string, string> = {
+    LOCAL_CHROME_REQUEST_TIMEOUT_MS: String(options.requestTimeoutMs ?? 30_000),
+  };
+  if (options.driverPath) env.KV_WINDOWS_UIA_DRIVER = options.driverPath;
+  const envBody = Object.entries(env)
+    .map(([key, value]) => `${key} = "${escapeTomlString(value)}"`)
+    .join(', ');
+
   return [
     CODEX_BLOCK_START,
     CODEX_TABLE,
     `command = "${escapeTomlString(nodePath)}"`,
     `args = ["${escapeTomlString(serverPath)}"]`,
-    'env = { LOCAL_CHROME_REQUEST_TIMEOUT_MS = "30000" }',
-    'startup_timeout_ms = 20000',
+    `env = { ${envBody} }`,
+    `startup_timeout_ms = ${options.startupTimeoutMs ?? 20_000}`,
     CODEX_BLOCK_END,
   ].join(newline);
 }
 
-export function upsertCodexBlock(source: string, serverPath: string, nodePath = process.execPath): ManagedConfigEdit {
+export function upsertCodexBlock(
+  source: string,
+  serverPath: string,
+  nodePath = process.execPath,
+  options: CodexLaunchOptions = {},
+): ManagedConfigEdit {
   const newline = source.includes('\r\n') ? '\r\n' : '\n';
   const lines = splitLines(source);
   const range = managedRange(lines);
-  const blockLines = renderCodexBlock(serverPath, nodePath, newline).split(/\r?\n/);
+  const blockLines = renderCodexBlock(serverPath, nodePath, newline, options).split(/\r?\n/);
 
   if (!range && lines.some((line) => line.trim() === CODEX_TABLE)) {
     throw new Error(`Refusing to replace unmanaged ${CODEX_TABLE} configuration.`);
