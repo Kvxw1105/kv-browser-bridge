@@ -1,31 +1,48 @@
 #!/usr/bin/env node
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { probeBrowserPublicIp, waitForDevToolsEndpoint } from './identity/browser-network-probe.js';
 import { buildLaunchPlan } from './identity/launch-plan.js';
 import { validateManifest } from './identity/health.js';
-import type { IdentityManifest } from './identity/model.js';
+import type { IdentityManifest, RuntimeReceipt } from './identity/model.js';
+import { readNetworkIdentityRecord, recordNetworkObservation, resetNetworkIdentityRecord } from './identity/network-observation.js';
 import { probeProxyEndpoint } from './identity/network-preflight.js';
-import { defaultRuntimeRoot } from './identity/paths.js';
+import { defaultRuntimeRoot, runtimePaths } from './identity/paths.js';
 import { IdentityRuntime } from './identity/session.js';
 import { acceptanceReportPath, runIdentityDoctor } from './identity/windows-doctor.js';
 
-const [command, manifestArgument] = process.argv.slice(2);
-const commands = ['check', 'plan', 'proxy-check', 'start', 'stop', 'status', 'doctor', 'acceptance'];
+const [command, manifestArgument, confirmation] = process.argv.slice(2);
+const commands = ['check', 'plan', 'proxy-check', 'network-check', 'network-status', 'network-reset', 'start', 'stop', 'status', 'doctor', 'acceptance'];
 if (!command || !manifestArgument || !commands.includes(command)) {
-  console.error('Usage: node dist/identity-cli.js <check|plan|proxy-check|start|stop|status|doctor|acceptance> <identity-manifest.json>');
+  console.error('Usage: node dist/identity-cli.js <check|plan|proxy-check|network-check|network-status|network-reset|start|stop|status|doctor|acceptance> <identity-manifest.json> [--confirm]');
   process.exit(2);
 }
 
 async function main(): Promise<void> {
   const manifestPath = resolve(manifestArgument);
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as IdentityManifest;
-  const runtime = new IdentityRuntime(defaultRuntimeRoot());
+  const rootDir = defaultRuntimeRoot();
+  const runtime = new IdentityRuntime(rootDir);
   let result: unknown;
   if (command === 'check') result = validateManifest(manifest);
   else if (command === 'plan') result = buildLaunchPlan(manifest);
   else if (command === 'proxy-check') result = await probeProxyEndpoint(manifest);
-  else if (command === 'start') result = await runtime.startVerified(manifest);
-  else if (command === 'stop') result = runtime.stop(manifest);
+  else if (command === 'start') {
+    const started = await runtime.startVerified(manifest);
+    if (!started.ok) result = started;
+    else {
+      const network = await verifyRunningNetwork(manifest, runtime, rootDir, started.receipt?.runtimeSessionId);
+      result = network.ok ? { ...started, networkVerification: network } : { ok: false, start: started, networkVerification: network };
+    }
+  } else if (command === 'network-check') result = await verifyRunningNetwork(manifest, runtime, rootDir, readRuntimeSessionId(rootDir, manifest.identityId));
+  else if (command === 'network-status') {
+    const network = readNetworkIdentityRecord(rootDir, manifest.identityId);
+    result = { ok: true, identityId: manifest.identityId, state: network?.state ?? 'unverified', network: network ?? null };
+  } else if (command === 'network-reset') {
+    if (confirmation !== '--confirm') result = { ok: false, error: { code: 'NETWORK_RESET_CONFIRMATION_REQUIRED', message: 'Pass --confirm to archive and reset the network identity baseline.' } };
+    else if (runtime.status(manifest).alive) result = { ok: false, error: { code: 'NETWORK_RESET_RUNNING', message: 'Stop the identity browser before resetting its network baseline.' } };
+    else result = { ok: true, identityId: manifest.identityId, ...resetNetworkIdentityRecord(rootDir, manifest.identityId) };
+  } else if (command === 'stop') result = runtime.stop(manifest);
   else if (command === 'status') result = runtime.status(manifest);
   else {
     const report = runIdentityDoctor(manifest, runtime.status(manifest));
@@ -42,8 +59,50 @@ async function main(): Promise<void> {
     if ('healthy' in value && value.healthy === false) process.exitCode = 1;
     if ('ok' in value && value.ok === false) process.exitCode = 1;
     if (Array.isArray(value.blockedReasons) && value.blockedReasons.length > 0) process.exitCode = 1;
-    if ('state' in value && !['running', 'stopped', 'not-started'].includes(String(value.state))) process.exitCode = 1;
+    if ('state' in value && !['running', 'stopped', 'not-started', 'verified', 'unverified'].includes(String(value.state))) process.exitCode = 1;
     if ((command === 'doctor' || command === 'acceptance') && value.ready !== true) process.exitCode = 1;
+  }
+}
+
+async function verifyRunningNetwork(
+  manifest: IdentityManifest,
+  runtime: IdentityRuntime,
+  rootDir: string,
+  runtimeSessionId?: string,
+): Promise<Record<string, unknown>> {
+  const status = runtime.status(manifest);
+  if (!status.alive || status.state !== 'running') {
+    return { ok: false, error: { code: 'IDENTITY_NOT_RUNNING', message: `Identity ${manifest.identityId} must be running before browser network verification.` } };
+  }
+  const endpoint = await waitForDevToolsEndpoint(manifest.browser.userDataDir);
+  if (!endpoint?.websocketUrl) {
+    const stopped = runtime.stop(manifest);
+    return { ok: false, stopped, error: { code: 'DEVTOOLS_ENDPOINT_UNAVAILABLE', message: 'Chrome did not expose a loopback DevTools endpoint for browser-side network verification.' } };
+  }
+  const probe = await probeBrowserPublicIp(endpoint);
+  if (!probe.ok || !probe.publicIp) {
+    const stopped = runtime.stop(manifest);
+    return { ok: false, probe, stopped, error: probe.error ?? { code: 'BROWSER_NETWORK_PROBE_FAILED', message: 'Browser public IP verification failed.' } };
+  }
+  const network = recordNetworkObservation(rootDir, manifest.identityId, {
+    publicIp: probe.publicIp,
+    probeUrl: probe.probeUrl,
+    observedAt: probe.observedAt,
+    runtimeSessionId,
+  });
+  if (network.state === 'frozen') {
+    const stopped = runtime.stop(manifest);
+    return { ok: false, probe, network, stopped, error: { code: 'NETWORK_IDENTITY_FROZEN', message: `Identity ${manifest.identityId} was frozen because its observed browser network is unsafe.` } };
+  }
+  return { ok: true, probe, network };
+}
+
+function readRuntimeSessionId(rootDir: string, identityId: string): string | undefined {
+  try {
+    const receipt = JSON.parse(readFileSync(runtimePaths(rootDir, identityId).receiptPath, 'utf8')) as RuntimeReceipt;
+    return receipt.runtimeSessionId;
+  } catch {
+    return undefined;
   }
 }
 
