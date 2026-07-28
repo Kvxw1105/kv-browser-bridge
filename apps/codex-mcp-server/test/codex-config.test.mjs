@@ -11,23 +11,27 @@ import {
 
 test('appends a managed Codex block without changing existing settings', () => {
   const original = 'model = "gpt-5"\n[mcp_servers.other]\ncommand = "other"\n';
-  const edit = upsertCodexBlock(original, 'C:\\kv\\computer-server.js', 'C:\\node\\node.exe');
+  const edit = upsertCodexBlock(original, 'C:\\kv\\computer-server.js', 'C:\\node\\node.exe', {
+    driverPath: 'C:\\kv\\kv-windows-uia-driver.exe',
+  });
   assert.equal(edit.changed, true);
   assert.match(edit.content, /^model = "gpt-5"/);
   assert.match(edit.content, /\[mcp_servers\.other\]/);
   assert.match(edit.content, new RegExp(CODEX_BLOCK_START));
   assert.match(edit.content, /command = "C:\\\\node\\\\node\.exe"/);
+  assert.match(edit.content, /KV_WINDOWS_UIA_DRIVER = "C:\\\\kv\\\\kv-windows-uia-driver\.exe"/);
   assert.equal(hasCodexBlock(edit.content), true);
 });
 
 test('updates only the managed block and is idempotent', () => {
-  const first = upsertCodexBlock('', 'C:\\old\\computer-server.js', 'C:\\node\\node.exe').content;
-  const second = upsertCodexBlock(first, 'D:\\new\\computer-server.js', 'D:\\node\\node.exe');
+  const first = upsertCodexBlock('', 'C:\\old\\computer-server.js', 'C:\\node\\node.exe', { driverPath: 'C:\\old\\driver.exe' }).content;
+  const second = upsertCodexBlock(first, 'D:\\new\\computer-server.js', 'D:\\node\\node.exe', { driverPath: 'D:\\new\\driver.exe' });
   assert.equal((second.content.match(new RegExp(CODEX_BLOCK_START, 'g')) ?? []).length, 1);
   assert.equal((second.content.match(new RegExp(CODEX_BLOCK_END, 'g')) ?? []).length, 1);
   assert.match(second.content, /D:\\\\new\\\\computer-server\.js/);
+  assert.match(second.content, /D:\\\\new\\\\driver\.exe/);
   assert.doesNotMatch(second.content, /C:\\\\old/);
-  assert.equal(upsertCodexBlock(second.content, 'D:\\new\\computer-server.js', 'D:\\node\\node.exe').changed, false);
+  assert.equal(upsertCodexBlock(second.content, 'D:\\new\\computer-server.js', 'D:\\node\\node.exe', { driverPath: 'D:\\new\\driver.exe' }).changed, false);
 });
 
 test('refuses to overwrite an unmanaged same-name table', () => {
