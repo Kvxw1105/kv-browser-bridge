@@ -15,29 +15,36 @@ const log = (event: string, fields: Record<string, unknown> = {}) => {
 const bridge = new BridgeClient({ requestTimeoutMs, log });
 const windows = new WindowsUiaClient(Math.min(requestTimeoutMs, 30_000));
 const runtime = new BrowserComputerRuntime(bridge, windows);
-const server = new McpServer({ name: 'kv-computer-use', version: '0.2.0' });
+const server = new McpServer({ name: 'kv-computer-use', version: '0.3.0' });
 const json = (result: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] });
 
-server.tool('computer_runtime_status', 'Return installed Computer Use drivers and health for Chrome Bridge and Windows UIA.', {}, async () => json(await runtime.status()));
-server.tool('computer_observe', 'Observe Chrome and the Windows desktop through one read-only Computer Use contract.', {
-  browser: z.boolean().optional().describe('Include Chrome tabs. Defaults to true.'),
-  windows: z.boolean().optional().describe('Include Windows UIA observations. Defaults to true when the sidecar is built.'),
-  windowHandle: z.number().int().positive().optional().describe('Optional native window handle to inspect instead of the foreground window.'),
+server.tool('computer_runtime_status', 'Return installed Computer Use drivers, capabilities, and health.', {}, async () => json(await runtime.status()));
+server.tool('computer_observe', 'Observe Chrome and the Windows desktop through one bounded Computer Use contract.', {
+  browser: z.boolean().optional(),
+  windows: z.boolean().optional(),
+  windowHandle: z.number().int().positive().optional(),
   maxWindows: z.number().int().min(1).max(100).optional(),
   maxElements: z.number().int().min(1).max(2_000).optional(),
   maxDepth: z.number().int().min(0).max(20).optional(),
 }, async (params) => json(await runtime.observe(params)));
-server.tool('computer_execute', 'Execute one policy-checked browser action and return a verification receipt. Windows UIA remains read-only.', {
+server.tool('computer_execute', 'Execute one policy-checked browser or controlled Windows UIA action and return a verified receipt.', {
   actionId: z.string().min(1),
   action: z.object({
     type: z.string().min(1),
     command: z.string().min(1).optional(),
     params: z.record(z.string(), z.unknown()).optional(),
+    windowHandle: z.number().int().positive().optional(),
+    targetRef: z.string().min(1).optional(),
+    value: z.string().optional(),
+    maxSearchElements: z.number().int().min(1).max(10_000).optional(),
+    maxSearchDepth: z.number().int().min(0).max(50).optional(),
   }).passthrough(),
   reason: z.string().min(1),
   expectedPostcondition: z.object({
-    kind: z.enum(['none', 'url_contains', 'text_present', 'driver_result']),
+    kind: z.enum(['none', 'url_contains', 'text_present', 'driver_result', 'window_focused', 'value_equals']),
     value: z.string().optional(),
+    windowHandle: z.number().int().positive().optional(),
+    targetRef: z.string().min(1).optional(),
   }),
   risk: z.enum(['read', 'reversible-write', 'external-write', 'destructive']),
   timeoutMs: z.number().int().positive().max(120_000).optional(),
@@ -56,7 +63,5 @@ void main().catch((error) => {
 });
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-  process.once(signal, () => {
-    void Promise.all([bridge.close(), runtime.close()]);
-  });
+  process.once(signal, () => { void Promise.all([bridge.close(), runtime.close()]); });
 }
