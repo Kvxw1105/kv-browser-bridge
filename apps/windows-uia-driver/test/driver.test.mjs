@@ -22,12 +22,15 @@ async function request(method, params = {}) {
   return JSON.parse(line);
 }
 
-test('reports read-only Windows UIA capabilities', async () => {
+test('reports controlled Windows UIA capabilities', async () => {
   const response = await request('status');
   assert.equal(response.ok, true);
   assert.equal(response.result.driver, 'windows-uia');
-  assert.equal(response.result.mode, 'read-only');
+  assert.equal(response.result.mode, 'controlled-write');
   assert.ok(response.result.capabilities.includes('observe_foreground'));
+  assert.ok(response.result.capabilities.includes('focus_window'));
+  assert.ok(response.result.capabilities.includes('invoke_ref'));
+  assert.ok(response.result.capabilities.includes('set_value_ref'));
 });
 
 test('returns a bounded Windows observation envelope', async () => {
@@ -38,4 +41,16 @@ test('returns a bounded Windows observation envelope', async () => {
   assert.ok(Array.isArray(response.result.elements));
   assert.ok(response.result.windows.length <= 5);
   assert.ok(response.result.elements.length <= 10);
+});
+
+test('rejects unknown UIA methods', async () => {
+  const response = await request('click_point', { x: 10, y: 10 });
+  assert.equal(response.ok, false);
+  assert.equal(response.error.code, 'METHOD_NOT_FOUND');
+});
+
+test('rejects malformed UIA references before execution', async () => {
+  const response = await request('invoke_ref', { windowHandle: 1, targetRef: 'coordinate:10,10' });
+  assert.equal(response.ok, false);
+  assert.ok(['WINDOW_NOT_FOUND', 'INVALID_ELEMENT_REF'].includes(response.error.code));
 });
