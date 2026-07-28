@@ -5,6 +5,7 @@ export * from './paths.js';
 export * from './lock.js';
 export * from './receipt.js';
 export * from './process-adapter.js';
+export * from './network-preflight.js';
 export * from './session.js';
 export * from './store.js';
 export * from './bridge-context.js';
