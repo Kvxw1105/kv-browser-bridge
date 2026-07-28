@@ -1,3 +1,4 @@
+import { isIP } from 'node:net';
 import type { HealthFinding, HealthReport, IdentityManifest } from './model.js';
 
 const TIMEZONE_COUNTRY_HINTS: Record<string, string[]> = {
@@ -31,6 +32,28 @@ export function validateManifest(manifest: IdentityManifest): HealthReport {
   if (authMode === 'none' && (manifest.proxy.username || manifest.proxy.passwordEnv)) findings.push(error('PROXY_AUTH_MODE', 'Proxy credentials are present while authMode is none.'));
   if (authMode === 'ip-allowlist' && (manifest.proxy.username || manifest.proxy.passwordEnv)) findings.push(error('PROXY_AUTH_MODE', 'IP-allowlist proxy mode must not include credentials.'));
   if (authMode === 'native-adapter' && (!manifest.proxy.username || !manifest.proxy.passwordEnv)) findings.push(error('PROXY_AUTH_CONFIG', 'Native proxy authentication requires username and passwordEnv.'));
+
+  const verification = manifest.networkVerification;
+  for (const [name, value] of Object.entries({
+    publicIpProbeUrl: verification?.publicIpProbeUrl,
+    ipv6ProbeUrl: verification?.ipv6ProbeUrl,
+    dnsProbeUrl: verification?.dnsProbeUrl,
+  })) {
+    if (!value) continue;
+    try {
+      if (new URL(value).protocol !== 'https:') findings.push(error('NETWORK_PROBE_URL', `${name} must use HTTPS.`));
+    } catch {
+      findings.push(error('NETWORK_PROBE_URL', `${name} must be a valid URL.`));
+    }
+  }
+  if (verification?.timeoutMs !== undefined && (verification.timeoutMs < 1_000 || verification.timeoutMs > 120_000)) {
+    findings.push(error('NETWORK_PROBE_TIMEOUT', 'networkVerification.timeoutMs must be between 1000 and 120000 milliseconds.'));
+  }
+  if (verification?.expectedDnsResolvers?.some((value) => isIP(value) === 0)) {
+    findings.push(error('DNS_RESOLVER_INVALID', 'expectedDnsResolvers must contain only IPv4 or IPv6 addresses.'));
+  }
+  if (manifest.policies.dns === 'proxy' && !verification?.dnsProbeUrl) findings.push(warning('DNS_PROBE_MISSING', 'Proxy DNS policy is configured but no browser-side dnsProbeUrl is available.'));
+  if (manifest.policies.ipv6 === 'disabled' && !verification?.ipv6ProbeUrl) findings.push(warning('IPV6_PROBE_MISSING', 'IPv6 is disabled by policy but no browser-side ipv6ProbeUrl is available.'));
 
   return { identityId: manifest.identityId, healthy: !findings.some((finding) => finding.severity === 'error'), findings };
 }
