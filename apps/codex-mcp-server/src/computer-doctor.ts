@@ -76,11 +76,12 @@ async function run(): Promise<ComputerDoctorReport> {
   }
 
   const receipts = new ReceiptStore();
+  const receiptPath = receipts.path();
   try {
-    await mkdir(dirname(receipts.path), { recursive: true });
-    checks.push({ name: 'receipt-directory', required: true, ok: true, message: 'Receipt directory is writable.', details: { path: receipts.path } });
+    await mkdir(dirname(receiptPath), { recursive: true });
+    checks.push({ name: 'receipt-directory', required: true, ok: true, message: 'Receipt directory is writable.', details: { path: receiptPath } });
   } catch (error) {
-    checks.push({ name: 'receipt-directory', required: true, ok: false, message: error instanceof Error ? error.message : String(error), details: { path: receipts.path } });
+    checks.push({ name: 'receipt-directory', required: true, ok: false, message: error instanceof Error ? error.message : String(error), details: { path: receiptPath } });
   }
 
   const bridge = new BridgeClient({ requestTimeoutMs: 5_000, log: () => undefined });
