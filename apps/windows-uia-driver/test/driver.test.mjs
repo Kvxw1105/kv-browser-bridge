@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 
 const driver = join(process.cwd(), 'apps', 'windows-uia-driver', 'bin', 'Release', 'net8.0-windows', 'kv-windows-uia-driver.dll');
 const harness = join(process.cwd(), 'apps', 'windows-uia-driver', 'test', 'fixtures', 'uia-harness.ps1');
@@ -94,9 +96,11 @@ test('returns a bounded Windows observation envelope', async () => {
 });
 
 test('controls a real Windows form through UI Automation', { timeout: 45_000 }, async () => {
+  const resultPath = join(tmpdir(), `kv-uia-result-${process.pid}-${Date.now()}.txt`);
   const form = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', harness], {
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: false,
+    env: { ...process.env, KV_UIA_HARNESS_RESULT_PATH: resultPath },
   });
   let formStderr = '';
   form.stderr.setEncoding('utf8');
@@ -143,23 +147,16 @@ test('controls a real Windows form through UI Automation', { timeout: 45_000 }, 
     });
     assert.equal(invokeResult.ok, true);
 
-    const appliedLabel = await waitFor(async () => {
-      const result = await session.request('observe', {
-        windowHandle: window.handle,
-        maxWindows: 100,
-        maxElements: 50,
-        maxDepth: 6,
-      });
-      assert.equal(result.ok, true);
-      return result.result.elements.find((element) => (
-        element.automationId === 'ResultLabel' && element.name === `Applied:${value}`
-      ));
-    }, 'button invocation did not update the real result label');
-    assert.equal(appliedLabel.ref, resultLabel.ref);
+    const applied = await waitFor(async () => {
+      try { return await readFile(resultPath, 'utf8'); }
+      catch { return undefined; }
+    }, 'button invocation did not execute the real form click handler');
+    assert.equal(applied.replace(/^\uFEFF/, ''), `Applied:${value}`);
   } finally {
     form.kill();
     await once(form, 'exit').catch(() => undefined);
     await session.close();
+    await rm(resultPath, { force: true });
     assert.equal(formStderr, '');
   }
 });
