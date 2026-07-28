@@ -19,6 +19,7 @@ function Invoke-Step {
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot '..')
 $startedManifests = @()
+$acceptancePassed = $false
 Push-Location $repoRoot
 try {
   if (-not $SkipInstall) {
@@ -46,7 +47,6 @@ try {
       throw "Identity $($networkEnvelope.identityId) is not verified. State: $($networkEnvelope.state)"
     }
     $network = $networkEnvelope.network
-    $leakPath = Join-Path (Split-Path $networkEnvelope.network.probeUrl -Parent) ''
     $runtimeRoot = if ($env:KV_IDENTITY_RUNTIME_DIR) { $env:KV_IDENTITY_RUNTIME_DIR } else { Join-Path $env:LOCALAPPDATA 'KvBrowserBridge\identities' }
     $leakReportPath = Join-Path $runtimeRoot "$($networkEnvelope.identityId)\network\network-leak-acceptance.json"
     if (-not (Test-Path $leakReportPath)) { throw "Leak acceptance report missing for $($networkEnvelope.identityId): $leakReportPath" }
@@ -84,9 +84,10 @@ try {
     leakAcceptancePassed = $true
   }
   $report | ConvertTo-Json -Depth 8 | Set-Content -Encoding UTF8 $reportPath
+  $acceptancePassed = $true
   Write-Host "`nAcceptance passed. Report: $reportPath"
 } finally {
-  if ($StopAfter -or $Error.Count -gt 0) {
+  if ($StopAfter -or -not $acceptancePassed) {
     foreach ($manifestPath in $startedManifests) {
       try { node $cli stop $manifestPath | Out-Host } catch { Write-Warning "Could not stop identity $manifestPath: $_" }
     }
