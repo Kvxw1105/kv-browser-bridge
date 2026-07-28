@@ -13,6 +13,7 @@ export type CodexInstallResult = {
   changed: boolean;
   backupPath?: string;
   serverPath: string;
+  driverPath?: string;
 };
 
 export function defaultCodexConfigPath(): string {
@@ -23,15 +24,16 @@ export function defaultCodexConfigPath(): string {
 
 export async function installCodexConfig(configPath = defaultCodexConfigPath()): Promise<CodexInstallResult> {
   const serverPath = computerServerPath();
+  const driverPath = await windowsDriverPath();
   await access(serverPath, constants.R_OK);
   const source = await readOptional(configPath);
-  const edit = upsertCodexBlock(source, serverPath, process.execPath);
-  if (!edit.changed) return { action: 'install', configPath, installed: true, changed: false, serverPath };
+  const edit = upsertCodexBlock(source, serverPath, process.execPath, { driverPath });
+  if (!edit.changed) return { action: 'install', configPath, installed: true, changed: false, serverPath, driverPath };
 
   await mkdir(dirname(configPath), { recursive: true });
   const backupPath = source.length > 0 ? await backup(configPath) : undefined;
   await atomicWrite(configPath, edit.content);
-  return { action: 'install', configPath, installed: true, changed: true, backupPath, serverPath };
+  return { action: 'install', configPath, installed: true, changed: true, backupPath, serverPath, driverPath };
 }
 
 export async function uninstallCodexConfig(configPath = defaultCodexConfigPath()): Promise<CodexInstallResult> {
@@ -53,6 +55,33 @@ export async function codexConfigStatus(configPath = defaultCodexConfigPath()): 
 
 function computerServerPath(): string {
   return resolve(dirname(fileURLToPath(import.meta.url)), 'computer-server.js');
+}
+
+async function windowsDriverPath(): Promise<string> {
+  const explicit = process.env.KV_WINDOWS_UIA_DRIVER;
+  if (explicit) {
+    const candidate = resolve(explicit);
+    await access(candidate, constants.R_OK);
+    return candidate;
+  }
+
+  const moduleDir = dirname(fileURLToPath(import.meta.url));
+  const repoRoot = resolve(moduleDir, '..', '..', '..');
+  const candidates = [
+    resolve(moduleDir, '..', 'windows-uia', 'kv-windows-uia-driver.exe'),
+    resolve(moduleDir, '..', 'windows-uia', 'kv-windows-uia-driver.dll'),
+    join(repoRoot, 'apps', 'windows-uia-driver', 'bin', 'Release', 'net8.0-windows', 'kv-windows-uia-driver.exe'),
+    join(repoRoot, 'apps', 'windows-uia-driver', 'bin', 'Release', 'net8.0-windows', 'kv-windows-uia-driver.dll'),
+  ];
+  for (const candidate of candidates) {
+    try {
+      await access(candidate, constants.R_OK);
+      return candidate;
+    } catch {
+      // Try the next deterministic location.
+    }
+  }
+  throw new Error('Windows UIA driver is missing. Build the release driver before installing the Codex MCP configuration.');
 }
 
 async function readOptional(path: string): Promise<string> {
