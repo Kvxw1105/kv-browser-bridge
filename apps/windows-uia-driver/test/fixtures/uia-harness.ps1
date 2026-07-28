@@ -33,8 +33,12 @@ $result.Location = New-Object System.Drawing.Point(24, 142)
 $form.Controls.Add($result)
 
 $apply.Add_Click({
-  $result.Text = "Applied:$($input.Text)"
-  $form.Text = "KV UIA Integration Harness - Applied:$($input.Text)"
+  $applied = "Applied:$($input.Text)"
+  $result.Text = $applied
+  $form.Text = "KV UIA Integration Harness - $applied"
+  if (-not [string]::IsNullOrWhiteSpace($env:KV_UIA_HARNESS_RESULT_PATH)) {
+    [IO.File]::WriteAllText($env:KV_UIA_HARNESS_RESULT_PATH, $applied, [Text.Encoding]::UTF8)
+  }
 })
 
 $form.Add_Shown({ $form.Activate() })
