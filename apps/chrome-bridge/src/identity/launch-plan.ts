@@ -46,7 +46,13 @@ export function buildLaunchPlan(manifest: IdentityManifest, env: NodeJS.ProcessE
     identityId: manifest.identityId,
     executablePath: manifest.browser.executablePath,
     args,
-    env: { TZ: manifest.environment.timezone, LANG: manifest.environment.locale },
+    env: {
+      TZ: manifest.environment.timezone,
+      LANG: manifest.environment.locale,
+      KV_BROWSER_IDENTITY_ID: manifest.identityId,
+      KV_BROWSER_WORKSPACE_ID: manifest.workspaceId,
+      KV_BROWSER_PLATFORM: manifest.platform,
+    },
     proxyAuth: { mode: authMode, username: manifest.proxy.username, passwordEnv: manifest.proxy.passwordEnv },
     blockedReasons: [...new Set(blockedReasons)],
   };
