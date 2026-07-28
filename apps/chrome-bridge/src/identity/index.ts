@@ -7,3 +7,4 @@ export * from './receipt.js';
 export * from './process-adapter.js';
 export * from './session.js';
 export * from './store.js';
+export * from './bridge-context.js';
