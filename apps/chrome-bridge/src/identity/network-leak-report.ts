@@ -42,7 +42,13 @@ export function buildNetworkLeakAcceptanceReport(input: BuildLeakReportInput): N
   const blockedReasons: string[] = [];
   const publicEgress = compareSingleIp(input.publicIp, input.baselinePublicIp, 'PUBLIC_EGRESS_UNVERIFIED', 'PUBLIC_EGRESS_MISMATCH', blockedReasons);
   const dns = compareSets(input.dnsResolvers, input.expectedDnsResolvers, 'DNS_UNVERIFIED', 'DNS_ROUTE_MISMATCH', blockedReasons);
-  const webrtc = compareSets(input.webrtcCandidates, input.allowedWebrtcCandidates, 'WEBRTC_UNVERIFIED', 'WEBRTC_LEAK_DETECTED', blockedReasons);
+  const webrtc = compareSets(
+    normalizeWebRtcObservations(input.webrtcCandidates),
+    normalizeWebRtcObservations(input.allowedWebrtcCandidates),
+    'WEBRTC_UNVERIFIED',
+    'WEBRTC_LEAK_DETECTED',
+    blockedReasons,
+  );
 
   let ipv6: NetworkLeakCheck;
   const observedIpv6 = (input.ipv6Addresses ?? []).filter((value) => isIP(value) === 6);
@@ -84,6 +90,26 @@ export function writeNetworkLeakAcceptanceReport(rootDir: string, report: Networ
   writeFileSync(temporary, `${JSON.stringify(report, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
   renameSync(temporary, path);
   return path;
+}
+
+export function normalizeWebRtcObservations(values: string[] | undefined): string[] | undefined {
+  if (values === undefined) return undefined;
+  const normalized: string[] = [];
+  for (const raw of values) {
+    const value = raw.trim();
+    if (!value) continue;
+    if (isIP(value)) {
+      normalized.push(value);
+      continue;
+    }
+    const candidateParts = value.split(/\s+/);
+    const address = candidateParts.length >= 5 ? candidateParts[4] : undefined;
+    const typeIndex = candidateParts.findIndex((part) => part === 'typ');
+    const candidateType = typeIndex >= 0 ? candidateParts[typeIndex + 1] : undefined;
+    if (address && isIP(address)) normalized.push(candidateType ? `${candidateType}:${address}` : address);
+    else if (/\.local$/i.test(address ?? '')) normalized.push(candidateType ? `${candidateType}:mdns` : 'mdns');
+  }
+  return [...new Set(normalized)].sort();
 }
 
 function compareSingleIp(
