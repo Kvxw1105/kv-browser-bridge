@@ -8,6 +8,7 @@ export * from './process-adapter.js';
 export * from './network-preflight.js';
 export * from './browser-network-probe.js';
 export * from './network-observation.js';
+export * from './network-leak-report.js';
 export * from './session.js';
 export * from './store.js';
 export * from './bridge-context.js';
