@@ -5,7 +5,14 @@ import { isAbsolute } from 'node:path';
 import { z } from 'zod/v4';
 import { BridgeClient, BridgeError } from './bridge-client.js';
 import { listIdentitySessions, resolveIdentityDiscovery } from './identity-registry.js';
-import { assertSelectedBridge, publicIdentitySession, type SelectedIdentityState } from './identity-selection.js';
+import {
+  assertSelectedBridge,
+  publicBridgeClientStatus,
+  publicBridgeStatus,
+  publicIdentitySession,
+  publicSelectedIdentity,
+  type SelectedIdentityState,
+} from './identity-selection.js';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const requestTimeoutMs = Number.parseInt(process.env.LOCAL_CHROME_REQUEST_TIMEOUT_MS ?? '', 10) || DEFAULT_TIMEOUT_MS;
@@ -43,6 +50,14 @@ function bridgeErrorResult(error: unknown) {
   };
 }
 
+function selected(): Record<string, unknown> | null {
+  return publicSelectedIdentity(selectedIdentity);
+}
+
+function safeBridge(status: unknown): unknown {
+  return publicBridgeStatus(status, Boolean(selectedIdentity.identityId));
+}
+
 async function requestBridge(method: string, params: Record<string, unknown> = {}, timeoutMs?: number): Promise<unknown> {
   if (selectedIdentity.identityId) {
     const status = await bridge.request('browser_connection_status');
@@ -63,10 +78,7 @@ async function callBridge(method: string, params: Record<string, unknown> = {}, 
 server.tool('browser_identity_sessions', 'List running identity-bound Chrome sessions without exposing Bridge bearer tokens or Named Pipe endpoints.', {}, async () => {
   try {
     const sessions = await listIdentitySessions();
-    return json({
-      selectedIdentityId: selectedIdentity.identityId,
-      sessions: sessions.map(publicIdentitySession),
-    });
+    return json({ selectedIdentity: selected(), sessions: sessions.map(publicIdentitySession) });
   } catch (error) {
     return bridgeErrorResult(error);
   }
@@ -81,16 +93,16 @@ server.tool('browser_select_identity', 'Select one running browser identity. Lat
     const discoveryPath = await resolveIdentityDiscovery(identityId);
     process.env.KV_BROWSER_BRIDGE_CONFIG = discoveryPath;
     selectedIdentity = { identityId, discoveryPath, selectedAt: new Date().toISOString() };
-    await bridge.close();
+    await bridge.reset();
     const status = await bridge.request('browser_connection_status');
     assertSelectedBridge(identityId, status);
     log('identity_selected', { identityId });
-    return json({ selectedIdentity, bridge: status });
+    return json({ selectedIdentity: selected(), bridge: safeBridge(status) });
   } catch (error) {
     selectedIdentity = previousSelection;
     if (previousConfig === undefined) delete process.env.KV_BROWSER_BRIDGE_CONFIG;
     else process.env.KV_BROWSER_BRIDGE_CONFIG = previousConfig;
-    await bridge.close();
+    await bridge.reset();
     return bridgeErrorResult(error);
   }
 });
@@ -100,7 +112,7 @@ server.tool('browser_selected_identity', 'Return the currently selected browser 
     if (!selectedIdentity.identityId) return json({ selectedIdentity: null, mode: 'legacy-default' });
     const status = await bridge.request('browser_connection_status');
     assertSelectedBridge(selectedIdentity.identityId, status);
-    return json({ selectedIdentity, bridge: status });
+    return json({ selectedIdentity: selected(), bridge: safeBridge(status) });
   } catch (error) {
     return bridgeErrorResult(error);
   }
@@ -109,7 +121,7 @@ server.tool('browser_selected_identity', 'Return the currently selected browser 
 server.tool('browser_clear_identity', 'Leave identity routing and return to the original default single-Chrome Bridge discovery behavior.', {}, async () => {
   delete process.env.KV_BROWSER_BRIDGE_CONFIG;
   selectedIdentity = {};
-  await bridge.close();
+  await bridge.reset();
   log('identity_cleared');
   return json({ selectedIdentity: null, mode: 'legacy-default' });
 });
@@ -128,16 +140,14 @@ server.tool('browser_switch_tab', 'Select a tab as the default target for later 
 }, async (params) => callBridge('browser_switch_tab', params));
 
 server.tool('browser_scroll', 'Scroll the page or a located scrollable element by a bounded amount.', {
-  ...{ tabId },
-  ...locator,
+  ...{ tabId }, ...locator,
   direction: z.enum(['up', 'down', 'left', 'right']).optional(),
   amount: z.number().int().min(1).max(10_000).optional(),
   behavior: z.enum(['auto', 'smooth']).optional(),
 }, async (params) => callBridge('browser_scroll', params));
 
 server.tool('browser_find', 'Read-only search for visible page elements by text, role, CSS selector, or XPath.', {
-  ...{ tabId },
-  ...locator,
+  ...{ tabId }, ...locator,
   text: z.string().min(1).max(500).optional(),
   role: z.string().min(1).max(100).optional(),
   maxResults: z.number().int().min(1).max(100).optional(),
@@ -207,28 +217,24 @@ server.tool('browser_screenshot', 'Capture a PNG screenshot from an existing Chr
 });
 
 server.tool('browser_click', 'Click one element using exactly one CSS selector or XPath.', {
-  ...{ tabId },
-  ...locator,
+  ...{ tabId }, ...locator,
   allowCommentSend: z.literal(true).optional().describe('Allow only a comment-composer button whose exact text is 发送. Final publish controls remain blocked.'),
   timeoutMs: z.number().int().positive().max(120_000).optional(),
 }, async ({ timeoutMs, ...params }) => callBridge('browser_click', params, timeoutMs));
 
 server.tool('browser_type', 'Focus an input and type text without using desktop coordinate automation.', {
-  ...{ tabId },
-  ...locator,
+  ...{ tabId }, ...locator,
   text: z.string().describe('Text to enter.'),
   clear: z.boolean().optional().describe('Clear existing input before typing.'),
 }, async (params) => callBridge('browser_type', params));
 
 server.tool('browser_press', 'Send a keyboard key or shortcut to a Chrome tab or focused element.', {
-  ...{ tabId },
-  ...locator,
+  ...{ tabId }, ...locator,
   key: z.string().min(1).describe('Key name such as Enter, Tab, Control+A, or Escape.'),
 }, async (params) => callBridge('browser_press', params));
 
 server.tool('browser_select', 'Set a select element by option value or visible label.', {
-  ...{ tabId },
-  ...locator,
+  ...{ tabId }, ...locator,
   value: z.string().optional().describe('Option value.'),
   label: z.string().optional().describe('Visible option label.'),
 }, async (params) => callBridge('browser_select', params));
@@ -240,84 +246,49 @@ server.tool('browser_evaluate', 'Evaluate a JavaScript expression in a Chrome pa
 }, async (params) => callBridge('browser_evaluate', params));
 
 server.tool('browser_set_files', 'Set files on an input[type=file] using Chrome DevTools Protocol. Paths must be absolute local paths.', {
-  ...{ tabId },
-  ...locator,
+  ...{ tabId }, ...locator,
   files: z.array(z.string().min(1).refine(isAbsolute, 'Each file path must be absolute.')).min(1).describe('Absolute local file paths to set on the upload input.'),
 }, async (params) => callBridge('browser_set_files', params, 120_000));
 
 server.tool('browser_wait_for', 'Wait for a selector, XPath, text, URL, or load condition in an existing Chrome tab.', {
   ...{ tabId },
-  selector: z.string().min(1).optional(),
-  xpath: z.string().min(1).optional(),
-  text: z.string().min(1).optional(),
-  url: z.string().min(1).optional(),
+  selector: z.string().min(1).optional(), xpath: z.string().min(1).optional(), text: z.string().min(1).optional(), url: z.string().min(1).optional(),
   state: z.enum(['attached', 'visible', 'hidden', 'detached', 'load']).optional(),
   timeoutMs: z.number().int().positive().max(120_000).optional(),
 }, async ({ timeoutMs, ...params }) => callBridge('browser_wait_for', params, timeoutMs));
 
 server.tool('browser_get_text', 'Read text from a page or one located element.', {
-  ...{ tabId },
-  ...locator,
+  ...{ tabId }, ...locator,
   maxChars: z.number().int().positive().max(1_000_000).optional().describe('Maximum characters returned.'),
 }, async (params) => callBridge('browser_get_text', params));
 
 server.tool('browser_get_url', 'Return the URL and title of a Chrome tab.', { ...{ tabId } }, async (params) => callBridge('browser_get_url', params));
-
-server.tool('browser_console_logs', 'Return bounded Console API entries collected after DevTools observation was enabled for a tab.', {
-  ...{ tabId },
-  limit: z.number().int().min(1).max(200).optional(),
-}, async (params) => callBridge('browser_console_logs', params));
-
-server.tool('browser_console_errors', 'Return bounded console warnings and uncaught exceptions collected for a tab.', {
-  ...{ tabId },
-  limit: z.number().int().min(1).max(200).optional(),
-}, async (params) => callBridge('browser_console_errors', params));
-
-server.tool('browser_network_requests', 'Return bounded Network responses observed after network collection was enabled for a tab.', {
-  ...{ tabId },
-  limit: z.number().int().min(1).max(200).optional(),
-}, async (params) => callBridge('browser_network_requests', params));
-
-server.tool('browser_network_failures', 'Return bounded failed, 4xx, and 5xx Network entries observed for a tab.', {
-  ...{ tabId },
-  limit: z.number().int().min(1).max(200).optional(),
-}, async (params) => callBridge('browser_network_failures', params));
-
-server.tool('browser_get_response_body', 'Return a bounded response body for one previously observed Network request. Response data can contain sensitive page data.', {
-  ...{ tabId },
-  requestId: z.string().min(1).describe('CDP request ID returned by browser_network_requests.'),
-  maxChars: z.number().int().min(1).max(100_000).optional(),
-}, async (params) => callBridge('browser_get_response_body', params));
-
-server.tool('browser_inspect_element', 'Inspect a CSS or XPath target and return its CDP node metadata and box model.', {
-  ...{ tabId },
-  ...locator,
-}, async (params) => callBridge('browser_inspect_element', params));
-
-server.tool('browser_get_element_styles', 'Inspect a CSS or XPath target and return bounded computed CSS styles with its box model.', {
-  ...{ tabId },
-  ...locator,
-}, async (params) => callBridge('browser_get_element_styles', params));
-
+server.tool('browser_console_logs', 'Return bounded Console API entries collected after DevTools observation was enabled for a tab.', { ...{ tabId }, limit: z.number().int().min(1).max(200).optional() }, async (params) => callBridge('browser_console_logs', params));
+server.tool('browser_console_errors', 'Return bounded console warnings and uncaught exceptions collected for a tab.', { ...{ tabId }, limit: z.number().int().min(1).max(200).optional() }, async (params) => callBridge('browser_console_errors', params));
+server.tool('browser_network_requests', 'Return bounded Network responses observed after network collection was enabled for a tab.', { ...{ tabId }, limit: z.number().int().min(1).max(200).optional() }, async (params) => callBridge('browser_network_requests', params));
+server.tool('browser_network_failures', 'Return bounded failed, 4xx, and 5xx Network entries observed for a tab.', { ...{ tabId }, limit: z.number().int().min(1).max(200).optional() }, async (params) => callBridge('browser_network_failures', params));
+server.tool('browser_get_response_body', 'Return a bounded response body for one previously observed Network request. Response data can contain sensitive page data.', { ...{ tabId }, requestId: z.string().min(1).describe('CDP request ID returned by browser_network_requests.'), maxChars: z.number().int().min(1).max(100_000).optional() }, async (params) => callBridge('browser_get_response_body', params));
+server.tool('browser_inspect_element', 'Inspect a CSS or XPath target and return its CDP node metadata and box model.', { ...{ tabId }, ...locator }, async (params) => callBridge('browser_inspect_element', params));
+server.tool('browser_get_element_styles', 'Inspect a CSS or XPath target and return bounded computed CSS styles with its box model.', { ...{ tabId }, ...locator }, async (params) => callBridge('browser_get_element_styles', params));
 server.tool('browser_page_metrics', 'Return bounded Chrome performance and layout metrics for a tab.', { ...{ tabId } }, async (params) => callBridge('browser_page_metrics', params));
 
 server.tool('browser_connection_status', 'Probe the selected identity Bridge, or the original default Bridge when no identity is selected.', {}, async () => {
   try {
     const status = await bridge.request('browser_connection_status');
     if (selectedIdentity.identityId) assertSelectedBridge(selectedIdentity.identityId, status);
-    return json({ ...bridge.getStatus(), selectedIdentity: selectedIdentity.identityId ? selectedIdentity : null, bridge: status });
+    return json({
+      ...publicBridgeClientStatus(bridge.getStatus(), Boolean(selectedIdentity.identityId)),
+      selectedIdentity: selected(),
+      bridge: safeBridge(status),
+    });
   } catch (error) {
     const bridgeError = error instanceof BridgeError
       ? error
       : new BridgeError('INTERNAL_ERROR', error instanceof Error ? error.message : String(error));
     return json({
-      ...bridge.getStatus(),
-      selectedIdentity: selectedIdentity.identityId ? selectedIdentity : null,
-      probeError: {
-        code: bridgeError.code,
-        message: bridgeError.message,
-        retryable: bridgeError.retryable,
-      },
+      ...publicBridgeClientStatus(bridge.getStatus(), Boolean(selectedIdentity.identityId)),
+      selectedIdentity: selected(),
+      probeError: { code: bridgeError.code, message: bridgeError.message, retryable: bridgeError.retryable },
     });
   }
 });
