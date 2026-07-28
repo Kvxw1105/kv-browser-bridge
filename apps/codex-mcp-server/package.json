@@ -8,6 +8,7 @@
     "kv-browser-bridge-mcp": "./dist/server.js",
     "kv-computer-use-mcp": "./dist/computer-server.js",
     "kv-computer-use-doctor": "./dist/computer-doctor.js",
+    "kv-computer-use-status": "./dist/computer-status.js",
     "kv-computer-use-codex": "./dist/codex-install.js"
   },
   "scripts": {
@@ -16,6 +17,7 @@
     "dev": "tsx src/server.ts",
     "dev:computer": "tsx src/computer-server.ts",
     "doctor:computer": "node dist/computer-doctor.js --json",
+    "status:computer": "node dist/computer-status.js --json",
     "codex:status": "node dist/codex-install.js status",
     "codex:install": "node dist/codex-install.js install",
     "codex:uninstall": "node dist/codex-install.js uninstall"
