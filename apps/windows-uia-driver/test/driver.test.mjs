@@ -141,17 +141,34 @@ test('controls a real Windows form through UI Automation', { timeout: 45_000 }, 
     assert.equal(setResult.result.valueSet, true);
     assert.equal(setResult.result.currentValue, value);
 
+    await waitFor(async () => {
+      const result = await session.request('observe', {
+        windowHandle: window.handle,
+        maxWindows: 100,
+        maxElements: 50,
+        maxDepth: 6,
+      });
+      assert.equal(result.ok, true);
+      const current = result.result.elements.find((element) => element.automationId === 'InputField');
+      return current?.value === value ? current : undefined;
+    }, 'input value did not stabilize before button invocation');
+
     const invokeResult = await session.request('invoke_ref', {
       windowHandle: window.handle,
       targetRef: apply.ref,
     });
     assert.equal(invokeResult.ok, true);
 
+    const expected = `Applied:${value}`;
     const applied = await waitFor(async () => {
-      try { return await readFile(resultPath, 'utf8'); }
-      catch { return undefined; }
+      try {
+        const content = (await readFile(resultPath, 'utf8')).replace(/^\uFEFF/, '');
+        return content === expected ? content : undefined;
+      } catch {
+        return undefined;
+      }
     }, 'button invocation did not execute the real form click handler');
-    assert.equal(applied.replace(/^\uFEFF/, ''), `Applied:${value}`);
+    assert.equal(applied, expected);
   } finally {
     form.kill();
     await once(form, 'exit').catch(() => undefined);
