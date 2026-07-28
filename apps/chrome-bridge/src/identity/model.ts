@@ -72,6 +72,7 @@ export interface RuntimeLockRecord {
 export interface RuntimeReceipt {
   schemaVersion: 1;
   identityId: string;
+  runtimeSessionId?: string;
   state: RuntimeSessionState;
   pid?: number;
   lockId?: string;
