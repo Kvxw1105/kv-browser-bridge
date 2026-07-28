@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { join } from 'node:path';
 import test from 'node:test';
 import {
   bridgeIdentityFromEnv,
@@ -24,9 +25,15 @@ test('reads a stable identity from the dedicated browser process environment', (
 });
 
 test('writes identity bridges to independent discovery paths', () => {
-  const env = { LOCALAPPDATA: 'C:\\KvTest' };
-  assert.equal(discoveryPathForIdentity(identity, env), 'C:\\KvTest/KvBrowserBridge/identities/huicelang-douyin/bridge.json');
-  assert.equal(discoveryPathForIdentity(undefined, env), 'C:\\KvTest/KvBrowserBridge/bridge.json');
+  const env = { LOCALAPPDATA: join('C:', 'KvTest') };
+  assert.equal(
+    discoveryPathForIdentity(identity, env),
+    join(env.LOCALAPPDATA, 'KvBrowserBridge', 'identities', identity.identityId, 'bridge.json'),
+  );
+  assert.equal(
+    discoveryPathForIdentity(undefined, env),
+    join(env.LOCALAPPDATA, 'KvBrowserBridge', 'bridge.json'),
+  );
 });
 
 test('accepts only an extension hello that exactly matches the bridge identity', () => {
