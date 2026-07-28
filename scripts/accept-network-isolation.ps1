@@ -18,6 +18,7 @@ function Invoke-Step {
 }
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot '..')
+$startedManifests = @()
 Push-Location $repoRoot
 try {
   if (-not $SkipInstall) {
@@ -34,25 +35,36 @@ try {
     $resolved = Resolve-Path $manifestPath
     Invoke-Step "Validate manifest $resolved" { node $cli check $resolved }
     Invoke-Step "Check proxy $resolved" { node $cli proxy-check $resolved }
-    Invoke-Step "Start and verify network $resolved" { node $cli start $resolved }
-    Invoke-Step "Read network status $resolved" { node $cli network-status $resolved }
+    Invoke-Step "Start and verify public egress $resolved" { node $cli start $resolved }
+    $startedManifests += $resolved.Path
+    Invoke-Step "Verify DNS, WebRTC, and IPv6 $resolved" { node $cli network-leak-check $resolved }
     Invoke-Step "Run identity doctor $resolved" { node $cli doctor $resolved }
 
-    $networkJson = node $cli network-status $resolved | Out-String
+    $networkEnvelope = (node $cli network-status $resolved | Out-String) | ConvertFrom-Json
     if ($LASTEXITCODE -ne 0) { throw "network-status failed for $resolved" }
-    $network = $networkJson | ConvertFrom-Json
-    if ($network.state -ne 'verified') {
-      throw "Identity $($network.identityId) is not verified. State: $($network.state)"
+    if ($networkEnvelope.state -ne 'verified' -or $null -eq $networkEnvelope.network) {
+      throw "Identity $($networkEnvelope.identityId) is not verified. State: $($networkEnvelope.state)"
     }
+    $network = $networkEnvelope.network
+    $leakPath = Join-Path (Split-Path $networkEnvelope.network.probeUrl -Parent) ''
+    $runtimeRoot = if ($env:KV_IDENTITY_RUNTIME_DIR) { $env:KV_IDENTITY_RUNTIME_DIR } else { Join-Path $env:LOCALAPPDATA 'KvBrowserBridge\identities' }
+    $leakReportPath = Join-Path $runtimeRoot "$($networkEnvelope.identityId)\network\network-leak-acceptance.json"
+    if (-not (Test-Path $leakReportPath)) { throw "Leak acceptance report missing for $($networkEnvelope.identityId): $leakReportPath" }
+    $leak = Get-Content -Raw $leakReportPath | ConvertFrom-Json
+    if ($leak.ready -ne $true) { throw "Leak acceptance is not ready for $($networkEnvelope.identityId): $($leak.blockedReasons -join ', ')" }
 
     $results += [pscustomobject]@{
       Manifest = $resolved.Path
-      IdentityId = $network.identityId
+      IdentityId = $networkEnvelope.identityId
       PublicIp = $network.publicIp
       BaselinePublicIp = $network.baselinePublicIp
       RuntimeSessionId = $network.runtimeSessionId
       ObservedAt = $network.observedAt
       State = $network.state
+      DnsStatus = $leak.dns.status
+      WebRtcStatus = $leak.webrtc.status
+      Ipv6Status = $leak.ipv6.status
+      LeakReportPath = $leakReportPath
     }
   }
 
@@ -64,21 +76,20 @@ try {
 
   $reportPath = Join-Path $repoRoot 'network-isolation-acceptance.json'
   $report = [pscustomobject]@{
-    schemaVersion = 1
+    schemaVersion = 2
     generatedAt = (Get-Date).ToUniversalTime().ToString('o')
     host = $env:COMPUTERNAME
     identities = $results
     uniquePublicIps = $true
+    leakAcceptancePassed = $true
   }
-  $report | ConvertTo-Json -Depth 6 | Set-Content -Encoding UTF8 $reportPath
+  $report | ConvertTo-Json -Depth 8 | Set-Content -Encoding UTF8 $reportPath
   Write-Host "`nAcceptance passed. Report: $reportPath"
-
-  if ($StopAfter) {
-    foreach ($manifestPath in $Manifest) {
-      $resolved = Resolve-Path $manifestPath
-      Invoke-Step "Stop identity $resolved" { node $cli stop $resolved }
+} finally {
+  if ($StopAfter -or $Error.Count -gt 0) {
+    foreach ($manifestPath in $startedManifests) {
+      try { node $cli stop $manifestPath | Out-Host } catch { Write-Warning "Could not stop identity $manifestPath: $_" }
     }
   }
-} finally {
   Pop-Location
 }
