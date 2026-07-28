@@ -1,13 +1,16 @@
+import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import type { IdentityManifest, RuntimeReceipt, RuntimeStatus } from './model.js';
 import { buildLaunchPlan } from './launch-plan.js';
 import { IdentityLockError, IdentityLockManager, SystemProcessLiveness } from './lock.js';
+import { probeProxyEndpoint, type ProxyReachabilityResult } from './network-preflight.js';
 import { NodeBrowserProcessAdapter, type BrowserProcessAdapter } from './process-adapter.js';
 import { RuntimeReceiptStore } from './receipt.js';
 
 export interface StartResult {
   ok: boolean;
   receipt?: RuntimeReceipt;
+  proxy?: ProxyReachabilityResult;
   blockedReasons?: string[];
   error?: { code: string; message: string };
 }
@@ -27,13 +30,34 @@ export class IdentityRuntime {
     private readonly processes: BrowserProcessAdapter = new NodeBrowserProcessAdapter(),
     private readonly now: () => Date = () => new Date(),
     lockManager?: IdentityLockManager,
+    private readonly sessionIdFactory: () => string = () => randomUUID(),
   ) {
     this.receipts = new RuntimeReceiptStore(rootDir);
     this.locks = lockManager ?? new IdentityLockManager(rootDir, new SystemProcessLiveness(), now);
   }
 
+  async startVerified(
+    manifest: IdentityManifest,
+    env: NodeJS.ProcessEnv = process.env,
+    probe: (manifest: IdentityManifest) => Promise<ProxyReachabilityResult> = probeProxyEndpoint,
+  ): Promise<StartResult> {
+    const proxy = await probe(manifest);
+    if (!proxy.ok) {
+      return {
+        ok: false,
+        proxy,
+        error: {
+          code: proxy.error?.code ?? 'PROXY_UNREACHABLE',
+          message: `Refusing to start identity ${manifest.identityId}: ${proxy.error?.message ?? 'proxy endpoint is unavailable.'}`,
+        },
+      };
+    }
+    return { ...this.start(manifest, env), proxy };
+  }
+
   start(manifest: IdentityManifest, env: NodeJS.ProcessEnv = process.env): StartResult {
-    const plan = buildLaunchPlan(manifest, env);
+    const runtimeSessionId = this.sessionIdFactory();
+    const plan = buildLaunchPlan(manifest, env, runtimeSessionId);
     if (plan.blockedReasons.length > 0) return { ok: false, blockedReasons: plan.blockedReasons };
 
     let lockId: string | undefined;
@@ -49,6 +73,7 @@ export class IdentityRuntime {
       const receipt: RuntimeReceipt = {
         schemaVersion: 1,
         identityId: manifest.identityId,
+        runtimeSessionId,
         state: 'running',
         pid,
         lockId: lock.lockId,
@@ -70,6 +95,7 @@ export class IdentityRuntime {
       const receipt: RuntimeReceipt = {
         schemaVersion: 1,
         identityId: manifest.identityId,
+        runtimeSessionId,
         state: 'failed',
         updatedAt: this.now().toISOString(),
         failure: { code, message },
