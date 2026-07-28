@@ -16,6 +16,15 @@ export interface ProxyBinding {
   locale: string;
 }
 
+export interface NetworkVerificationConfig {
+  publicIpProbeUrl?: string;
+  ipv6ProbeUrl?: string;
+  dnsProbeUrl?: string;
+  expectedDnsResolvers?: string[];
+  allowedWebrtcCandidates?: string[];
+  timeoutMs?: number;
+}
+
 export interface IdentityManifest {
   schemaVersion: 1;
   identityId: string;
@@ -42,6 +51,7 @@ export interface IdentityManifest {
     ipv6: 'default' | 'disabled';
     allowConcurrentSessions: boolean;
   };
+  networkVerification?: NetworkVerificationConfig;
   createdAt: string;
   updatedAt: string;
 }
