@@ -12,6 +12,25 @@ export interface BrowserTargetObservation {
   active?: boolean;
 }
 
+export interface WindowsObservation {
+  protocolVersion: number;
+  observationId: string;
+  capturedAt: string;
+  driver: 'windows-uia';
+  foregroundWindowHandle: number;
+  windows: unknown[];
+  targetWindow?: unknown;
+  elements: unknown[];
+  truncated: boolean;
+}
+
+export interface DriverFailure {
+  driver: DriverKind;
+  code: string;
+  message: string;
+  retryable?: boolean;
+}
+
 export interface ComputerObservation {
   protocolVersion: number;
   observationId: string;
@@ -19,6 +38,8 @@ export interface ComputerObservation {
   availableDrivers: DriverKind[];
   activeDriver?: DriverKind;
   browserTargets?: BrowserTargetObservation[];
+  windows?: WindowsObservation;
+  driverFailures?: DriverFailure[];
   metadata?: Record<string, unknown>;
 }
 
