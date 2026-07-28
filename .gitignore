@@ -6,6 +6,20 @@ dist/
 .DS_Store
 .playwright-mcp/
 .worktrees/
+
+# Local browser identity configuration and runtime evidence.
+# These files can contain account labels, machine paths, proxy endpoints,
+# profile locations, public IP observations, and acceptance reports.
+local/
+.local/
+identities/
+generated-identities/
+network-runtime-discovery.json
+**/network-isolation-acceptance.json
+**/network-leak-acceptance.json
+**/network-observation.json
+**/runtime-receipt.json
+
 # Extension build artifacts (both old `-extension-` and newer `-vX.Y.Z` naming)
 claude-code-browser*.zip
 release/
