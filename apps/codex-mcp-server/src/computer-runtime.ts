@@ -4,71 +4,54 @@ import {
   type ActionReceipt,
   type ComputerObservation,
   validateActionEnvelope,
-} from '@kv-browser-bridge/computer-contracts';
-import { BridgeClient, BridgeError } from './bridge-client.js';
+} from './computer-contracts.js';
+import { BridgeError } from './bridge-client.js';
+
+export interface ComputerBridgePort {
+  request(method: string, params?: Record<string, unknown>, timeoutMs?: number): Promise<unknown>;
+  getStatus(): unknown;
+}
 
 export class BrowserComputerRuntime {
-  constructor(private readonly bridge: BridgeClient) {}
+  constructor(private readonly bridge: ComputerBridgePort) {}
+
+  status() {
+    return {
+      protocolVersion: COMPUTER_PROTOCOL_VERSION,
+      availableDrivers: ['browser'],
+      plannedDrivers: ['windows-uia', 'vision', 'input', 'native-app'],
+      bridge: this.bridge.getStatus(),
+    };
+  }
 
   async observe(): Promise<ComputerObservation> {
-    const tabs = await this.bridge.request('browser_get_tabs') as unknown;
-    const browserTargets = normalizeTabs(tabs);
+    const tabs = await this.bridge.request('browser_get_tabs');
     return {
       protocolVersion: COMPUTER_PROTOCOL_VERSION,
       observationId: crypto.randomUUID(),
       capturedAt: new Date().toISOString(),
       availableDrivers: ['browser'],
       activeDriver: 'browser',
-      browserTargets,
-      metadata: {
-        bridge: this.bridge.getStatus(),
-      },
+      browserTargets: normalizeTabs(tabs),
+      metadata: { bridge: this.bridge.getStatus() },
     };
   }
 
   async execute(envelope: ActionEnvelope): Promise<ActionReceipt> {
     const startedAt = new Date().toISOString();
-    const errors = validateActionEnvelope(envelope);
-    if (errors.length > 0) {
-      return {
-        protocolVersion: COMPUTER_PROTOCOL_VERSION,
-        actionId: envelope.actionId,
-        startedAt,
-        finishedAt: new Date().toISOString(),
-        driver: 'browser',
-        status: 'blocked',
-        error: {
-          code: 'POLICY_BLOCKED',
-          message: errors.join('; '),
-          retryable: false,
-        },
-        verification: { status: 'unknown' },
-      };
-    }
+    const blocked = validateActionEnvelope(envelope);
+    if (blocked.length > 0) return receipt(envelope.actionId, startedAt, 'blocked', {
+      code: 'POLICY_BLOCKED', message: blocked.join('; '), retryable: false,
+    });
 
-    if (envelope.action.type !== 'browser_command') {
-      return {
-        protocolVersion: COMPUTER_PROTOCOL_VERSION,
-        actionId: envelope.actionId,
-        startedAt,
-        finishedAt: new Date().toISOString(),
-        driver: 'browser',
-        status: 'blocked',
-        error: {
-          code: 'DRIVER_UNAVAILABLE',
-          message: `Action ${envelope.action.type} requires a driver that is not installed yet.`,
-          retryable: false,
-        },
-        verification: { status: 'unknown' },
-      };
-    }
+    if (envelope.action.type !== 'browser_command') return receipt(envelope.actionId, startedAt, 'blocked', {
+      code: 'DRIVER_UNAVAILABLE',
+      message: `Action ${envelope.action.type} requires a driver that is not installed yet.`,
+      retryable: false,
+    });
 
     try {
-      const result = await this.bridge.request(
-        envelope.action.command,
-        envelope.action.params ?? {},
-        envelope.timeoutMs,
-      );
+      const result = await this.bridge.request(envelope.action.command, envelope.action.params ?? {}, envelope.timeoutMs);
       const verification = verifyDriverResult(envelope, result);
       return {
         protocolVersion: COMPUTER_PROTOCOL_VERSION,
@@ -84,22 +67,30 @@ export class BrowserComputerRuntime {
       const bridgeError = error instanceof BridgeError
         ? error
         : new BridgeError('INTERNAL_ERROR', error instanceof Error ? error.message : String(error));
-      return {
-        protocolVersion: COMPUTER_PROTOCOL_VERSION,
-        actionId: envelope.actionId,
-        startedAt,
-        finishedAt: new Date().toISOString(),
-        driver: 'browser',
-        status: 'failed',
-        error: {
-          code: bridgeError.code,
-          message: bridgeError.message,
-          retryable: bridgeError.retryable,
-        },
-        verification: { status: 'failed' },
-      };
+      return receipt(envelope.actionId, startedAt, 'failed', {
+        code: bridgeError.code, message: bridgeError.message, retryable: bridgeError.retryable,
+      }, 'failed');
     }
   }
+}
+
+function receipt(
+  actionId: string,
+  startedAt: string,
+  status: ActionReceipt['status'],
+  error: NonNullable<ActionReceipt['error']>,
+  verification: ActionReceipt['verification']['status'] = 'unknown',
+): ActionReceipt {
+  return {
+    protocolVersion: COMPUTER_PROTOCOL_VERSION,
+    actionId,
+    startedAt,
+    finishedAt: new Date().toISOString(),
+    driver: 'browser',
+    status,
+    error,
+    verification: { status: verification },
+  };
 }
 
 function normalizeTabs(value: unknown): ComputerObservation['browserTargets'] {
@@ -108,7 +99,6 @@ function normalizeTabs(value: unknown): ComputerObservation['browserTargets'] {
     : typeof value === 'object' && value !== null && Array.isArray((value as { tabs?: unknown }).tabs)
       ? (value as { tabs: unknown[] }).tabs
       : [];
-
   return candidates.flatMap((candidate) => {
     if (typeof candidate !== 'object' || candidate === null) return [];
     const tab = candidate as Record<string, unknown>;
@@ -130,10 +120,7 @@ function verifyDriverResult(envelope: ActionEnvelope, result: unknown): ActionRe
     return { status: result === undefined ? 'failed' : 'passed', evidence: { resultPresent: result !== undefined } };
   }
   const serialized = JSON.stringify(result);
-  if (postcondition.kind === 'url_contains' || postcondition.kind === 'text_present') {
-    const value = postcondition.value ?? '';
-    const passed = value.length > 0 && serialized.includes(value);
-    return { status: passed ? 'passed' : 'failed', evidence: { expected: value } };
-  }
-  return { status: 'unknown' };
+  const expected = postcondition.value ?? '';
+  const passed = expected.length > 0 && serialized.includes(expected);
+  return { status: passed ? 'passed' : 'failed', evidence: { expected } };
 }
