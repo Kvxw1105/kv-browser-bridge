@@ -10,6 +10,7 @@ export * from './browser-network-probe.js';
 export * from './browser-leak-probe.js';
 export * from './network-observation.js';
 export * from './network-leak-report.js';
+export * from './console-service.js';
 export * from './session.js';
 export * from './store.js';
 export * from './bridge-context.js';
