@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { healthState, operationClassForMethod, PerTabWriteQueue, timeoutErrorForMethod } from './reliability.js';
+import { createClientIdentity, type ClientIdentity } from './client-identity.js';
 
 export type BridgeErrorCode =
   | 'BRIDGE_UNAVAILABLE'
@@ -57,6 +58,7 @@ export type BridgeStatus = {
 export type BridgeClientOptions = {
   requestTimeoutMs: number;
   log: (event: string, fields?: Record<string, unknown>) => void;
+  identity?: ClientIdentity;
 };
 
 function configPaths(): string[] {
@@ -141,7 +143,11 @@ export class BridgeClient {
   private sessionId: string | undefined;
   private readonly writeQueue = new PerTabWriteQueue();
 
-  constructor(private readonly options: BridgeClientOptions) {}
+  private readonly identity: ClientIdentity;
+
+  constructor(private readonly options: BridgeClientOptions) {
+    this.identity = options.identity ?? createClientIdentity();
+  }
 
   getStatus(): BridgeStatus {
     const bridge = this.bridgeStatus as { extensionConnected?: unknown; nativeReady?: unknown; lastExtensionMessageAt?: unknown } | undefined;
@@ -258,11 +264,8 @@ export class BridgeClient {
   }
 
   private async hello(): Promise<void> {
-    const result = await this.requestRaw('hello', {
-      token: this.token,
-      client: 'codex-mcp-server',
-      version: '0.1.0',
-    }, Math.min(this.options.requestTimeoutMs, 10_000));
+    const result = await this.requestRaw('hello', buildHelloParams(this.identity, this.token),
+      Math.min(this.options.requestTimeoutMs, 10_000));
     if (typeof result === 'object' && result !== null && (result as { accepted?: boolean }).accepted === false) {
       throw new BridgeError('BRIDGE_AUTH_FAILED', 'Chrome Bridge rejected the MCP server token.');
     }
@@ -385,4 +388,17 @@ export class BridgeClient {
     this.lastError = { code: error.code, message: error.message, at: new Date().toISOString() };
     this.options.log('bridge_error', { code: error.code, message: error.message, retryable: error.retryable });
   }
+}
+
+export function buildHelloParams(identity: ClientIdentity, token?: string): Record<string, unknown> {
+  return {
+    ...(token === undefined ? {} : { token }),
+    // Keep legacy fields so older Bridge hosts can authenticate and identify us.
+    client: 'codex-mcp-server',
+    version: '0.1.0',
+    clientId: identity.clientId,
+    clientName: identity.clientName,
+    instanceId: identity.instanceId,
+    capabilities: [...identity.capabilities],
+  };
 }
