@@ -2,7 +2,8 @@ import { app, ipcMain } from 'electron';
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { IdentityConsoleService } from '../../../chrome-bridge/src/identity/console-service.js';
-import type { IdentityConsoleApiResult, IdentityConsoleItem, IdentityConsoleOperationResult } from '../shared/identity-console.js';
+import type { IdentityConsoleApiResult, IdentityConsoleItem, IdentityConsoleOperationResult, IdentityConsoleLog } from '../shared/identity-console.js';
+import type { IdentityManifest } from '../../../chrome-bridge/src/identity/model.js';
 
 let service: IdentityConsoleService | undefined;
 
@@ -43,4 +44,11 @@ export function registerIdentityConsoleHandlers(): void {
   ipcMain.handle('identity:status', (_event, identityId: string) => safe<IdentityConsoleItem>(() => getService().getIdentityStatus(identityId) as IdentityConsoleItem));
   ipcMain.handle('identity:start', (_event, identityId: string) => safe<IdentityConsoleOperationResult>(() => getService().startIdentity(identityId) as Promise<IdentityConsoleOperationResult>));
   ipcMain.handle('identity:stop', (_event, identityId: string) => safe<IdentityConsoleOperationResult>(() => getService().stopIdentity(identityId) as IdentityConsoleOperationResult));
+  ipcMain.handle('identity:create', (_event, manifest: IdentityManifest) => safe<IdentityConsoleItem>(() => getService().createIdentity(manifest) as IdentityConsoleItem));
+  ipcMain.handle('identity:update', (_event, manifest: IdentityManifest) => safe<IdentityConsoleItem>(() => getService().updateIdentity(manifest) as IdentityConsoleItem));
+  ipcMain.handle('identity:delete', (_event, identityId: string) => safe<void>(() => getService().deleteIdentity(identityId)));
+  ipcMain.handle('identity:refreshAll', () => safe<IdentityConsoleItem[]>(() => getService().listIdentities() as IdentityConsoleItem[]));
+  ipcMain.handle('identity:validateAll', () => safe(() => getService().validateAllIdentities()));
+  ipcMain.handle('identity:stopAll', () => safe<IdentityConsoleOperationResult[]>(() => getService().stopAll() as IdentityConsoleOperationResult[]));
+  ipcMain.handle('identity:logs', () => safe<IdentityConsoleLog[]>(() => getService().listLogs() as IdentityConsoleLog[]));
 }

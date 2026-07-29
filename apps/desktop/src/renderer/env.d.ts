@@ -1,6 +1,8 @@
 /// <reference types="vite/client" />
 import type { ClientMessage, ServerMessage } from '@claude-code-browser/shared';
 import type { IdentityConsoleApiResult, IdentityConsoleItem, IdentityConsoleOperationResult } from '../shared/identity-console';
+import type { IdentityConsoleLog } from '../shared/identity-console';
+import type { IdentityManifest } from '../../chrome-bridge/src/identity/model';
 
 declare global {
   interface Window {
@@ -9,6 +11,13 @@ declare global {
       status(identityId: string): Promise<IdentityConsoleApiResult<IdentityConsoleItem>>;
       start(identityId: string): Promise<IdentityConsoleApiResult<IdentityConsoleOperationResult>>;
       stop(identityId: string): Promise<IdentityConsoleApiResult<IdentityConsoleOperationResult>>;
+      create(manifest: IdentityManifest): Promise<IdentityConsoleApiResult<IdentityConsoleItem>>;
+      update(manifest: IdentityManifest): Promise<IdentityConsoleApiResult<IdentityConsoleItem>>;
+      delete(identityId: string): Promise<IdentityConsoleApiResult<void>>;
+      refreshAll(): Promise<IdentityConsoleApiResult<IdentityConsoleItem[]>>;
+      validateAll(): Promise<IdentityConsoleApiResult<unknown[]>>;
+      stopAll(): Promise<IdentityConsoleApiResult<IdentityConsoleOperationResult[]>>;
+      logs(): Promise<IdentityConsoleApiResult<IdentityConsoleLog[]>>;
     };
     ccb: {
       /** True in Electron (preload bridge), false in plain browser (web-transport polyfill). */
