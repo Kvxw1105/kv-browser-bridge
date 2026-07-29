@@ -8,6 +8,7 @@ import { NewProjectView } from './NewProjectView';
 import { IdentityConsoleView } from './IdentityConsoleView';
 import { KvDashboard } from './KvDashboard';
 import { IdentityForm } from './IdentityForm';
+import type { IdentityManifest } from '../../../../chrome-bridge/src/identity/model';
 
 const ANIM = { duration: 0.22, ease: [0.4, 0, 0.2, 1] as [number, number, number, number] };
 
@@ -22,18 +23,19 @@ export function HomeScreen() {
   const isElectron = window.ccb.isElectron;
   const [view, setView] = useState<HomeView>('list');
   const [webPath, setWebPath] = useState('');
+  const [editing, setEditing] = useState<IdentityManifest>();
 
   const go = (target: HomeView, _dir?: 'push' | 'pop'): void => { setView(target); };
 
   if (view === 'identity-console') {
-    return <IdentityConsoleView onBack={() => go('list', 'pop')} />;
+    return <IdentityConsoleView onBack={() => go('list', 'pop')} onEdit={(manifest) => { setEditing(manifest); go('identity-form'); }} />;
   }
-  if (view === 'identity-form') return <IdentityForm onDone={() => go('list')} onCancel={() => go('list')} />;
+  if (view === 'identity-form') return <IdentityForm initial={editing} onDone={() => { setEditing(undefined); go('list'); }} onCancel={() => { setEditing(undefined); go('list'); }} />;
 
   return (
     <div className="home">
       <div className="home__stage">
-        {view === 'list' && <KvDashboard openConsole={() => go('identity-console')} openFolder={() => void openFolder()} newProject={() => go('identity-form')} />}
+        {view === 'list' && <KvDashboard openConsole={() => go('identity-console')} openFolder={() => void openFolder()} newProject={() => { setEditing(undefined); go('identity-form'); }} />}
         {false && view === 'list' && (
           <div className="home__column">
               <div className="home__label">CLAUDE-CODE-BROWSER</div>
