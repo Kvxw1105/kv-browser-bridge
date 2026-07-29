@@ -9,6 +9,10 @@ export const NATIVE_CHUNK_MAX_BYTES = 384 * 1024;
 export const PIPE_LINE_MAX_BYTES = 1024 * 1024;
 
 export * from './flow-recorder.js';
+export * from './coordinator.js';
+
+import type { CoordinationPipeMethod, CoordinationStatus } from './coordinator.js';
+import { isAgentIdentity } from './coordinator.js';
 
 export type BrowserAction =
   | 'get_tabs'
@@ -82,6 +86,10 @@ export type BridgeErrorCode =
   | 'UNKNOWN_OUTCOME'
   | 'DEBUGGER_DETACHED'
   | 'DEBUGGER_IN_USE'
+  | 'RESOURCE_BUSY'
+  | 'RESOURCE_QUARANTINED'
+  | 'TAB_ID_REQUIRED'
+  | 'LEASE_NOT_OWNED'
   | 'INTERNAL_ERROR';
 
 export interface BridgeError {
@@ -107,6 +115,9 @@ export type NativeMessage = BrowserRequest | BrowserResponse | NativeChunk | {
   type: 'ping';
 } | {
   type: 'pong';
+} | {
+  type: 'bridge:coordination_status';
+  status: CoordinationStatus;
 };
 
 export interface PipeHello {
@@ -118,6 +129,9 @@ export interface PipeHello {
   /** Accepted during the migration from the original bridge draft. */
   protocolVersion?: number | string;
   clientName?: string;
+  clientId?: string;
+  instanceId?: string;
+  capabilities?: import('./coordinator.js').AgentCapability[];
 }
 
 export interface PipeHelloAck {
@@ -130,7 +144,7 @@ export interface PipeHelloAck {
 export interface PipeRequest {
   type?: 'request';
   id: string;
-  method: BrowserToolName | RuntimeToolName | 'browser_connection_status';
+  method: BrowserToolName | RuntimeToolName | 'browser_connection_status' | CoordinationPipeMethod;
   params?: Record<string, unknown>;
   timeoutMs?: number;
   sessionId?: string;
@@ -147,11 +161,19 @@ export interface PipeResponse {
   error?: BridgeError;
 }
 
-export interface PipeEvent {
+export interface ConnectionStatusPipeEvent {
   type: 'event';
   event: 'connection:status';
   data: BridgeConnectionStatus;
 }
+
+export interface CoordinationStatusPipeEvent {
+  type: 'event';
+  event: 'coordination:status';
+  data: CoordinationStatus;
+}
+
+export type PipeEvent = ConnectionStatusPipeEvent | CoordinationStatusPipeEvent;
 
 export type PipeMessage = PipeHello | PipeHelloAck | PipeRequest | PipeResponse | PipeEvent;
 
@@ -214,7 +236,9 @@ export function isPipeHello(value: unknown): value is PipeHello {
     && value.type === 'hello'
     && typeof value.token === 'string'
     && (typeof value.version === 'number' || typeof value.version === 'string'
-      || typeof value.protocolVersion === 'number' || typeof value.protocolVersion === 'string');
+      || typeof value.protocolVersion === 'number' || typeof value.protocolVersion === 'string')
+    && (!('clientId' in value || 'instanceId' in value || 'capabilities' in value)
+      || isAgentIdentity(value));
 }
 
 export function isPipeRequest(value: unknown): value is PipeRequest {
