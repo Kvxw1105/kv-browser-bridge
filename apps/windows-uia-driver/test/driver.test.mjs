@@ -25,6 +25,26 @@ function startDriver() {
   let sequence = 0;
   const pending = new Map();
 
+  function rejectPending(error) {
+    for (const [id, resolver] of pending) {
+      pending.delete(id);
+      resolver.reject(error);
+    }
+  }
+
+  const exitPromise = new Promise((resolve) => {
+    child.once('error', (error) => {
+      rejectPending(new Error(`Windows UIA driver failed to start: ${error.message}`));
+      resolve({ code: null, signal: null, error });
+    });
+    child.once('exit', (code, signal) => {
+      if (pending.size > 0) {
+        rejectPending(new Error(`Windows UIA driver exited before responding. code=${code} signal=${signal} stderr=${stderr}`));
+      }
+      resolve({ code, signal, error: null });
+    });
+  });
+
   child.stderr.on('data', (chunk) => { stderr += chunk; });
   child.stdout.on('data', (chunk) => {
     buffer += chunk;
@@ -46,20 +66,33 @@ function startDriver() {
     request(method, params = {}) {
       const id = `test-${++sequence}`;
       return new Promise((resolve, reject) => {
+        if (child.exitCode !== null || child.signalCode !== null) {
+          reject(new Error(`Windows UIA driver is not running. code=${child.exitCode} signal=${child.signalCode} stderr=${stderr}`));
+          return;
+        }
         const timer = setTimeout(() => {
           pending.delete(id);
           reject(new Error(`Timed out waiting for ${method}. stderr=${stderr}`));
         }, 15_000);
         pending.set(id, {
           resolve: (value) => { clearTimeout(timer); resolve(value); },
+          reject: (error) => { clearTimeout(timer); reject(error); },
         });
-        child.stdin.write(`${JSON.stringify({ id, method, params })}\n`);
+        child.stdin.write(`${JSON.stringify({ id, method, params })}\n`, (error) => {
+          if (!error) return;
+          const resolver = pending.get(id);
+          if (!resolver) return;
+          pending.delete(id);
+          resolver.reject(new Error(`Failed to write ${method} request to Windows UIA driver: ${error.message}`));
+        });
       });
     },
     async close() {
-      child.stdin.end();
-      const [code] = await once(child, 'exit');
-      assert.equal(code, 0, stderr);
+      if (child.exitCode === null && child.signalCode === null) child.stdin.end();
+      const result = await exitPromise;
+      if (result.error) throw result.error;
+      assert.equal(result.signal, null, stderr);
+      assert.equal(result.code, 0, stderr);
     },
   };
 }
