@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -43,6 +43,21 @@ test('lightweight setup entries are not mistaken for full identity manifests', (
   }));
   const service = new IdentityConsoleService(root);
   assert.deepEqual(service.listIdentities(), []);
+});
+
+test('updates configuration without changing createdAt and deletes no profile data', () => {
+  const root = mkdtempSync(join(tmpdir(), 'console-edit-'));
+  const profile = join(root, 'profile');
+  const service = new IdentityConsoleService(root);
+  const original = { ...manifest('account-edit', 7892), browser: { executablePath: process.execPath, userDataDir: profile } };
+  writeFileSync(profile, 'profile data');
+  service.createIdentity(original);
+  const updated = service.updateIdentity({ ...original, accountLabel: 'Updated account', updatedAt: '2026-01-02T00:00:00.000Z' });
+  assert.equal(updated.manifest.accountLabel, 'Updated account');
+  assert.equal(updated.manifest.createdAt, original.createdAt);
+  service.deleteIdentity(original.identityId);
+  assert.deepEqual(service.listIdentities(), []);
+  assert.equal(readFileSync(profile, 'utf8'), 'profile data');
 });
 
 test('start and stop preserve structured operation failures for the renderer', async () => {

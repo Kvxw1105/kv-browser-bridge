@@ -28,7 +28,7 @@ export function HomeScreen() {
   const go = (target: HomeView, _dir?: 'push' | 'pop'): void => { setView(target); };
 
   if (view === 'identity-console') {
-    return <IdentityConsoleView onBack={() => go('list', 'pop')} onEdit={(manifest) => { setEditing(manifest); go('identity-form'); }} />;
+    return <IdentityConsoleView onBack={() => go('list', 'pop')} onCreate={() => { setEditing(undefined); go('identity-form'); }} onEdit={(manifest) => { setEditing(manifest); go('identity-form'); }} />;
   }
   if (view === 'identity-form') return <IdentityForm initial={editing} onDone={() => { setEditing(undefined); go('list'); }} onCancel={() => { setEditing(undefined); go('list'); }} />;
 
