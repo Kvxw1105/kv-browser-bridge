@@ -7,10 +7,11 @@ import { RecentProjectRow } from './RecentProjectRow';
 import { NewProjectView } from './NewProjectView';
 import { IdentityConsoleView } from './IdentityConsoleView';
 import { KvDashboard } from './KvDashboard';
+import { IdentityForm } from './IdentityForm';
 
 const ANIM = { duration: 0.22, ease: [0.4, 0, 0.2, 1] as [number, number, number, number] };
 
-type HomeView = 'list' | 'new-project' | 'identity-console';
+type HomeView = 'list' | 'new-project' | 'identity-console' | 'identity-form';
 
 export function HomeScreen() {
   const recents = useRecentsStore((s) => s.items);
@@ -27,11 +28,12 @@ export function HomeScreen() {
   if (view === 'identity-console') {
     return <IdentityConsoleView onBack={() => go('list', 'pop')} />;
   }
+  if (view === 'identity-form') return <IdentityForm onDone={() => go('list')} onCancel={() => go('list')} />;
 
   return (
     <div className="home">
       <div className="home__stage">
-        {view === 'list' && <KvDashboard openConsole={() => go('identity-console')} openFolder={() => void openFolder()} newProject={() => go('new-project')} />}
+        {view === 'list' && <KvDashboard openConsole={() => go('identity-console')} openFolder={() => void openFolder()} newProject={() => go('identity-form')} />}
         {false && view === 'list' && (
           <div className="home__column">
               <div className="home__label">CLAUDE-CODE-BROWSER</div>
