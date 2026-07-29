@@ -1,6 +1,7 @@
 import { app, ipcMain } from 'electron';
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { IdentityConsoleService } from '../../../chrome-bridge/src/identity/console-service.js';
 import type { IdentityConsoleApiResult, IdentityConsoleItem, IdentityConsoleOperationResult, IdentityConsoleLog } from '../shared/identity-console.js';
 import type { IdentityManifest } from '../../../chrome-bridge/src/identity/model.js';
@@ -22,6 +23,10 @@ export function resolveIdentityConsoleDir(
 function getService(): IdentityConsoleService {
   if (!service) service = new IdentityConsoleService(resolveIdentityConsoleDir());
   return service;
+}
+function discover(): unknown {
+  const raw = execFileSync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', resolve(process.cwd(), 'scripts', 'discover-network-runtime.ps1'), '-Compact'], { encoding: 'utf8', timeout: 30_000 });
+  return JSON.parse(raw);
 }
 
 function errorFrom(value: unknown): { code: string; message: string } {
@@ -51,4 +56,5 @@ export function registerIdentityConsoleHandlers(): void {
   ipcMain.handle('identity:validateAll', () => safe(() => getService().validateAllIdentities()));
   ipcMain.handle('identity:stopAll', () => safe<IdentityConsoleOperationResult[]>(() => getService().stopAll() as IdentityConsoleOperationResult[]));
   ipcMain.handle('identity:logs', () => safe<IdentityConsoleLog[]>(() => getService().listLogs() as IdentityConsoleLog[]));
+  ipcMain.handle('identity:discover', () => safe(discover));
 }
