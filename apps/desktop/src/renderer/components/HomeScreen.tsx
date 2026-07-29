@@ -1,14 +1,15 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { AlertTriangle, FolderOpen, Plus } from 'lucide-react';
+import { AlertTriangle, FolderOpen, Plus, ShieldCheck } from 'lucide-react';
 import { useRecentsStore } from '../stores/recents-store';
 import { useWorkspaceStore } from '../stores/workspace-store';
 import { RecentProjectRow } from './RecentProjectRow';
 import { NewProjectView } from './NewProjectView';
+import { IdentityConsoleView } from './IdentityConsoleView';
 
 const ANIM = { duration: 0.22, ease: [0.4, 0, 0.2, 1] as [number, number, number, number] };
 
-type HomeView = 'list' | 'new-project';
+type HomeView = 'list' | 'new-project' | 'identity-console';
 
 export function HomeScreen() {
   const recents = useRecentsStore((s) => s.items);
@@ -22,6 +23,10 @@ export function HomeScreen() {
 
   const go = (target: HomeView, _dir?: 'push' | 'pop'): void => { setView(target); };
 
+  if (view === 'identity-console') {
+    return <IdentityConsoleView onBack={() => go('list', 'pop')} />;
+  }
+
   return (
     <div className="home">
       <div className="home__stage">
@@ -29,7 +34,7 @@ export function HomeScreen() {
           <div className="home__column">
               <div className="home__label">CLAUDE-CODE-BROWSER</div>
               <h1 className="home__heading">Open a project</h1>
-              <p className="home__sub">Pick a folder to start, or create a new one.</p>
+              <p className="home__sub">Pick a folder to start, or manage isolated browser identities.</p>
 
               <div className="home__actions">
                 <motion.button
@@ -64,6 +69,21 @@ export function HomeScreen() {
                     <span className="home-action__hint">Create an empty folder</span>
                   </span>
                 </motion.button>
+
+                {isElectron && (
+                  <motion.button
+                    className="home-action"
+                    whileHover={{ y: -1 }}
+                    transition={ANIM}
+                    onClick={() => go('identity-console', 'push')}
+                  >
+                    <span className="home-action__icon"><ShieldCheck size={18} strokeWidth={1.75} /></span>
+                    <span className="home-action__body">
+                      <span className="home-action__title">Identity Console</span>
+                      <span className="home-action__hint">Start, stop and inspect isolated Chrome profiles</span>
+                    </span>
+                  </motion.button>
+                )}
               </div>
 
               {!isElectron && (
