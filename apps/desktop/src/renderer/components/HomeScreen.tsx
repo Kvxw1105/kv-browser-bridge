@@ -6,6 +6,7 @@ import { useWorkspaceStore } from '../stores/workspace-store';
 import { RecentProjectRow } from './RecentProjectRow';
 import { NewProjectView } from './NewProjectView';
 import { IdentityConsoleView } from './IdentityConsoleView';
+import { KvDashboard } from './KvDashboard';
 
 const ANIM = { duration: 0.22, ease: [0.4, 0, 0.2, 1] as [number, number, number, number] };
 
@@ -30,7 +31,8 @@ export function HomeScreen() {
   return (
     <div className="home">
       <div className="home__stage">
-        {view === 'list' && (
+        {view === 'list' && <KvDashboard openConsole={() => go('identity-console')} openFolder={() => void openFolder()} newProject={() => go('new-project')} />}
+        {false && view === 'list' && (
           <div className="home__column">
               <div className="home__label">CLAUDE-CODE-BROWSER</div>
               <h1 className="home__heading">Open a project</h1>
@@ -142,7 +144,7 @@ export function HomeScreen() {
         )}
       </div>
 
-      <div className="home__footer">claude-code-browser</div>
+      <div className="home__footer">KV Browser Bridge</div>
     </div>
   );
 }

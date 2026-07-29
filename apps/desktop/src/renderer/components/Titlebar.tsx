@@ -54,7 +54,7 @@ export function Titlebar() {
   return (
     <div className="titlebar" onDoubleClick={() => { if (window.ccb.app.isWindows) void window.ccb.app.window.toggleMaximize(); }}>
       <div className="titlebar__breadcrumb">
-        <span className="titlebar__app">claude-code-browser</span>
+        <span className="titlebar__app">KV Browser Bridge</span>
         <AnimatePresence initial={false}>
           {projectName && (
             <motion.span
