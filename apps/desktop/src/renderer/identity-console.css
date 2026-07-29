@@ -185,6 +185,11 @@
 .identity-console__spin {
   animation: identity-console-spin 0.8s linear infinite;
 }
+.identity-console__logs { max-width:1120px; margin:28px auto 0; border-top:1px solid rgba(34,31,26,.12); padding-top:18px; }
+.identity-console__logs-heading { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+.identity-console__logs h2 { margin:0; font-size:16px; }
+.identity-console__log { display:grid; grid-template-columns:130px 1fr 180px 2fr; gap:10px; padding:9px 0; border-bottom:1px solid rgba(34,31,26,.08); font-size:11px; }
+.identity-console__log.is-ok strong { color:#315d38; }.identity-console__log.is-failed strong { color:#8f3830; }
 
 @keyframes identity-console-spin {
   to { transform: rotate(360deg); }

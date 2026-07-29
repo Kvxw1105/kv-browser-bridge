@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ArrowLeft, CircleAlert, Loader2, Play, RefreshCw, Square, Trash2 } from 'lucide-react';
 import type { IdentityConsoleItem } from '../../shared/identity-console';
+import type { IdentityConsoleLog } from '../../shared/identity-console';
 import '../identity-console.css';
 
 interface IdentityConsoleViewProps {
@@ -12,6 +13,7 @@ export function IdentityConsoleView({ onBack }: IdentityConsoleViewProps) {
   const [loading, setLoading] = useState(true);
   const [busyIdentity, setBusyIdentity] = useState<string>();
   const [error, setError] = useState<string>();
+  const [logs, setLogs] = useState<IdentityConsoleLog[]>([]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -23,6 +25,8 @@ export function IdentityConsoleView({ onBack }: IdentityConsoleViewProps) {
   }, []);
 
   useEffect(() => { void refresh(); }, [refresh]);
+  const refreshLogs = async (): Promise<void> => { const result = await window.identityConsole.logs(); if (result.ok) setLogs(result.data ?? []); };
+  useEffect(() => { void refreshLogs(); }, []);
 
   const operate = async (identityId: string, operation: 'start' | 'stop' | 'refresh'): Promise<void> => {
     setBusyIdentity(identityId);
@@ -48,7 +52,7 @@ export function IdentityConsoleView({ onBack }: IdentityConsoleViewProps) {
     if (!window.confirm(`Remove ${identityId}? Chrome profile data will be retained.`)) return;
     setBusyIdentity(identityId);
     try { const result = await window.identityConsole.delete(identityId); if (!result.ok) setError(`${result.error?.code ?? 'DELETE_FAILED'}: ${result.error?.message ?? ''}`); else setIdentities((current) => current.filter((item) => item.manifest.identityId !== identityId)); }
-    finally { setBusyIdentity(undefined); }
+    finally { setBusyIdentity(undefined); void refreshLogs(); }
   };
   const validateAll = async (): Promise<void> => { setLoading(true); try { const result = await window.identityConsole.validateAll(); if (!result.ok) setError(`${result.error?.code ?? 'VALIDATE_FAILED'}: ${result.error?.message ?? ''}`); else setError(`Validated ${result.data?.length ?? 0} identities. See operations log for details.`); } finally { setLoading(false); } };
   const stopAll = async (): Promise<void> => { setLoading(true); try { const result = await window.identityConsole.stopAll(); if (!result.ok) setError(`${result.error?.code ?? 'STOP_ALL_FAILED'}: ${result.error?.message ?? ''}`); await refresh(); } finally { setLoading(false); } };
@@ -138,6 +142,10 @@ export function IdentityConsoleView({ onBack }: IdentityConsoleViewProps) {
           })}
         </div>
       )}
+      <section className="identity-console__logs">
+        <div className="identity-console__logs-heading"><h2>Operations</h2><button className="identity-console__refresh-all" onClick={() => void refreshLogs()}>Refresh logs</button></div>
+        {logs.slice(0, 20).map((entry) => <div className={`identity-console__log ${entry.ok ? 'is-ok' : 'is-failed'}`} key={`${entry.operation}:${entry.completedAt}:${entry.identityId ?? ''}`}><strong>{entry.operation}</strong><span>{entry.identityId ?? 'system'}</span><span>{new Date(entry.completedAt).toLocaleString()}</span><span>{entry.ok ? 'Success' : `${entry.errorCode ?? 'FAILED'} ${entry.errorMessage ?? ''}`}</span></div>)}
+      </section>
     </div>
   );
 }
