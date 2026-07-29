@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowLeft, CircleAlert, Loader2, Play, RefreshCw, Square, Trash2 } from 'lucide-react';
+import { ArrowLeft, CircleAlert, Loader2, Play, RefreshCw, Square, Trash2, Pencil } from 'lucide-react';
 import type { IdentityConsoleItem } from '../../shared/identity-console';
 import type { IdentityConsoleLog } from '../../shared/identity-console';
+import type { IdentityManifest } from '../../../../chrome-bridge/src/identity/model';
 import '../identity-console.css';
 
 interface IdentityConsoleViewProps {
   onBack(): void;
+  onEdit(manifest: IdentityManifest): void;
 }
 
-export function IdentityConsoleView({ onBack }: IdentityConsoleViewProps) {
+export function IdentityConsoleView({ onBack, onEdit }: IdentityConsoleViewProps) {
   const [identities, setIdentities] = useState<IdentityConsoleItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyIdentity, setBusyIdentity] = useState<string>();
@@ -136,6 +138,7 @@ export function IdentityConsoleView({ onBack }: IdentityConsoleViewProps) {
                     <Trash2 size={14} />
                     Delete
                   </button>
+                  <button onClick={() => onEdit(identity.manifest as IdentityManifest)} disabled={busy}><Pencil size={14} /> Edit</button>
                 </div>
               </article>
             );
