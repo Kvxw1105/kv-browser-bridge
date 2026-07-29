@@ -41,6 +41,33 @@ export interface CoordinationStatusView {
   leases: Array<Pick<ResourceLease, 'resource' | 'purpose' | 'state' | 'expiresAt'>>;
 }
 
+/**
+ * Project the in-process coordination state onto the transport-safe view.
+ * Keep this explicit so newly added session or lease fields cannot leak by
+ * accident through a spread or JSON serialization of the full status.
+ */
+export function toCoordinationStatusView(status: CoordinationStatus): CoordinationStatusView {
+  return {
+    mode: status.mode,
+    clients: status.clients.map((client) => ({
+      clientId: client.clientId,
+      clientName: client.clientName,
+      ...(client.defaultTabId === undefined ? {} : { defaultTabId: client.defaultTabId }),
+    })),
+    leases: status.leases.map((lease) => ({
+      resource: lease.resource,
+      purpose: lease.purpose,
+      state: lease.state,
+      expiresAt: lease.expiresAt,
+    })),
+  };
+}
+
+/** Return the transport-safe coordination status object used by bridge/native messages. */
+export function serializeCoordinationStatus(status: CoordinationStatus): CoordinationStatusView {
+  return toCoordinationStatusView(status);
+}
+
 export type CoordinationPipeMethod =
   | 'browser_get_clients'
   | 'browser_lease_acquire'
@@ -66,8 +93,9 @@ export function isAgentIdentity(value: unknown): value is AgentIdentity {
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string'
-    && value.trim().length > 0
-    && value.trim().length <= 100;
+    && value === value.trim()
+    && value.length > 0
+    && value.length <= 100;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

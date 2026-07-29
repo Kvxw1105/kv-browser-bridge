@@ -4,6 +4,8 @@ import {
   isAgentIdentity,
   isBrowserToolName,
   isPipeHello,
+  serializeCoordinationStatus,
+  toCoordinationStatusView,
 } from '../dist/index.js';
 
 test('accepts legacy pipe hello fields', () => {
@@ -42,6 +44,50 @@ test('rejects malformed agent identities in pipe hello', () => {
     type: 'hello', token: 'TOKEN', version: 1,
     clientId: 'x'.repeat(101), clientName: 'Coordinator', instanceId: 'instance-1', capabilities: ['read'],
   }), false);
+  assert.equal(isPipeHello({
+    type: 'hello', token: 'TOKEN', version: 1, clientName: 42,
+  }), false, 'clientName-only hello type');
+  for (const field of ['clientId', 'clientName', 'instanceId']) {
+    const identity = {
+      clientId: 'client-1', clientName: 'Coordinator', instanceId: 'instance-1', capabilities: ['read'],
+      [field]: ` ${identityValue(field)} `,
+    };
+    assert.equal(isAgentIdentity(identity), false, `${field} surrounding whitespace`);
+    assert.equal(isPipeHello({ type: 'hello', token: 'TOKEN', version: 1, ...identity }), false, `${field} hello surrounding whitespace`);
+  }
+});
+
+function identityValue(field) {
+  return field === 'clientName' ? 'Coordinator' : `${field}-1`;
+}
+
+test('projects full coordination status before transport serialization', () => {
+  const fullStatus = {
+    mode: 'enforce',
+    clients: [{
+      clientId: 'client-1', clientName: 'Coordinator', instanceId: 'instance-1', capabilities: ['record'],
+      sessionId: 'session-1', connectedAt: '2026-07-30T00:00:00.000Z', lastSeenAt: '2026-07-30T00:00:01.000Z', defaultTabId: 42,
+    }],
+    leases: [{
+      id: 'lease-1', resource: 'tab:42', ownerSessionId: 'session-1', purpose: 'recording', state: 'active',
+      acquiredAt: '2026-07-30T00:00:00.000Z', expiresAt: '2026-07-30T00:01:00.000Z',
+    }],
+  };
+  const projected = toCoordinationStatusView(fullStatus);
+  assert.deepEqual(projected, {
+    mode: 'enforce',
+    clients: [{ clientId: 'client-1', clientName: 'Coordinator', defaultTabId: 42 }],
+    leases: [{ resource: 'tab:42', purpose: 'recording', state: 'active', expiresAt: '2026-07-30T00:01:00.000Z' }],
+  });
+  assert.deepEqual(serializeCoordinationStatus(fullStatus), projected);
+  const payload = JSON.stringify({
+    native: { type: 'bridge:coordination_status', status: serializeCoordinationStatus(fullStatus) },
+    pipe: { type: 'event', event: 'coordination:status', data: serializeCoordinationStatus(fullStatus) },
+  });
+  for (const field of ['instanceId', 'sessionId', 'ownerSessionId', 'connectedAt', 'lastSeenAt', 'acquiredAt']) {
+    assert.equal(payload.includes(field), false, field);
+  }
+  assert.equal(payload.includes('"id"'), false, 'lease id');
 });
 
 test('round-trips redacted coordination status transport messages', () => {

@@ -235,6 +235,7 @@ export function isPipeHello(value: unknown): value is PipeHello {
   return isRecord(value)
     && value.type === 'hello'
     && typeof value.token === 'string'
+    && (!('clientName' in value) || typeof value.clientName === 'string')
     && (typeof value.version === 'number' || typeof value.version === 'string'
       || typeof value.protocolVersion === 'number' || typeof value.protocolVersion === 'string')
     && (!('clientId' in value || 'instanceId' in value || 'capabilities' in value)
