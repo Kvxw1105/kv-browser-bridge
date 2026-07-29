@@ -2,6 +2,7 @@
  * Main-window preload. Exposes a minimal, typed `window.ccb` bridge to the
  * renderer — the desktop equivalent of the extension's chrome.runtime.Port.
  */
+import './identity-console.js';
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { ClientMessage, ServerMessage } from '@claude-code-browser/shared';
 
