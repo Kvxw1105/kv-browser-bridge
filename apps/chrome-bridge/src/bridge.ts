@@ -29,6 +29,7 @@ import {
   type AgentCapability,
   type AgentIdentity,
   type CoordinationStatusView,
+  type CoordinationPipeMethod,
   isAgentIdentity,
   serializeCoordinationStatus,
 } from '@kv-browser-bridge/browser-protocol';
@@ -311,13 +312,19 @@ class ChromeBridge {
   }
 
   private async handlePipeRequest(socket: BridgeSocket, request: PipeRequest, authenticatedSessionId: string): Promise<void> {
-    this.coordinator.touch(authenticatedSessionId);
     if (request.method === 'browser_connection_status') {
+      this.coordinator.touch(authenticatedSessionId);
       this.writePipe(socket, { type: 'response', id: request.id, ok: true, result: this.status() } satisfies PipeResponse);
       return;
     }
     if (isRuntimeMethod(request.method)) {
+      this.coordinator.touch(authenticatedSessionId);
       await this.handleRuntimeRequest(socket, request, authenticatedSessionId);
+      return;
+    }
+    if (isCoordinationMethod(request.method)) {
+      this.coordinator.touch(authenticatedSessionId);
+      await this.handleCoordinationRequest(socket, request, authenticatedSessionId);
       return;
     }
     if (!isBrowserToolName(request.method)) {
@@ -327,7 +334,7 @@ class ChromeBridge {
     const clientIdentity = socket.kvIdentity?.clientId ?? authenticatedSessionId;
     const action = browserActionFromTool(request.method);
     const sessionId = socket.kvSessionId ?? authenticatedSessionId;
-    const cacheKey = `${clientIdentity}:${request.idempotencyKey ?? request.id}`;
+    const cacheKey = `${clientIdentity}:${request.method}:${action}:${request.idempotencyKey ?? request.id}`;
     if (this.idempotencyCompleted.size > 1024) {
       const now = Date.now();
       for (const [key, value] of this.idempotencyCompleted) {
@@ -341,6 +348,25 @@ class ChromeBridge {
         : { type: 'response', id: request.id, ok: true, result: cached.result });
       return;
     }
+    const existingExecution = this.idempotencyInFlight.get(cacheKey);
+    if (existingExecution) {
+      try {
+        const result = await existingExecution;
+        this.writePipe(socket, { type: 'response', id: request.id, ok: true, result } satisfies PipeResponse);
+      } catch (error) {
+        this.writePipe(socket, { type: 'response', id: request.id, ok: false, error: this.coordinatorError(error) } satisfies PipeResponse);
+      }
+      return;
+    }
+    let settleExecution!: (value: unknown) => void;
+    let rejectExecution!: (reason?: unknown) => void;
+    const reservedExecution = new Promise<unknown>((resolve, reject) => {
+      settleExecution = resolve;
+      rejectExecution = reject;
+    });
+    reservedExecution.catch(() => undefined);
+    this.idempotencyInFlight.set(cacheKey, reservedExecution);
+    this.coordinator.touch(authenticatedSessionId);
     const originalParams = { ...(request.params ?? {}) };
     let params: Record<string, unknown>;
     try {
@@ -354,6 +380,9 @@ class ChromeBridge {
       }
     } catch (error) {
       const bridgeError = this.coordinatorError(error);
+      rejectExecution(error);
+      this.idempotencyCompleted.set(cacheKey, { expiresAt: Date.now() + 30_000, error: bridgeError });
+      this.idempotencyInFlight.delete(cacheKey);
       this.writePipe(socket, { type: 'response', id: request.id, ok: false, error: bridgeError } satisfies PipeResponse);
       return;
     }
@@ -364,11 +393,8 @@ class ChromeBridge {
       typeof params.tabId === 'number' ? params.tabId : undefined,
     ));
     try {
-      let execution = this.idempotencyInFlight.get(cacheKey);
-      if (!execution) {
-        execution = this.coordinateBrowserRequest(request.id, sessionId, action, params, request.timeoutMs, request.deadlineAt);
-        this.idempotencyInFlight.set(cacheKey, execution);
-      }
+      const execution = this.coordinateBrowserRequest(request.id, sessionId, action, params, request.timeoutMs, request.deadlineAt);
+      execution.then(settleExecution, rejectExecution);
       const result = await execution;
       this.idempotencyCompleted.set(cacheKey, { expiresAt: Date.now() + 30_000, result });
       if (request.method === 'browser_screenshot') this.persistScreenshotArtifact(result, params.artifactPath, params.artifactOnly === true);
@@ -381,6 +407,7 @@ class ChromeBridge {
       this.writePipe(socket, { type: 'response', id: request.id, ok: true, result } satisfies PipeResponse);
     } catch (error) {
       const bridgeError = this.coordinatorError(error);
+      rejectExecution(error);
       this.idempotencyCompleted.set(cacheKey, { expiresAt: Date.now() + 30_000, error: bridgeError });
       this.runtimeSafe(() => this.runtime?.recordResult(eventId, undefined, bridgeError));
       if (action === 'record_start') this.releaseRecordingLeases(sessionId, params.tabId, bridgeError.code === 'UNKNOWN_OUTCOME');
@@ -428,7 +455,15 @@ class ChromeBridge {
 
   private acquireRecordingLeases(sessionId: string, tabId: number, purpose: unknown): void {
     const existing = this.recordingLeases.get(sessionId);
-    if (existing) return;
+    if (existing) {
+      if (existing.tabId !== tabId) {
+        throw this.error('INVALID_REQUEST', 'Recording lease already targets a different tab', false, {
+          activeTabId: existing.tabId,
+          requestedTabId: tabId,
+        });
+      }
+      return;
+    }
     const label = typeof purpose === 'string' && purpose.trim() ? purpose.trim() : 'recording';
     const recorderLease = this.coordinator.acquire(sessionId, 'global:recorder', label, 300_000);
     try {
@@ -474,6 +509,9 @@ class ChromeBridge {
     }
     const timeoutMs = clampTimeout(requestedTimeout);
     const deadlineAt = Math.min(typeof requestedDeadline === 'number' ? requestedDeadline : Infinity, Date.now() + timeoutMs);
+    if (typeof requestedDeadline === 'number' && Number.isFinite(requestedDeadline) && requestedDeadline <= Date.now()) {
+      return Promise.reject(this.error('REQUEST_TIMEOUT', `Browser action ${action} deadline has expired`, operationClassFor(action) === 'read', { action, deadlineAt: requestedDeadline }));
+    }
     const remainingMs = Math.max(0, deadlineAt - Date.now());
     // The authenticated bridge is the trust boundary for retry semantics.
     const operationClass = operationClassFor(action);
@@ -505,6 +543,42 @@ class ChromeBridge {
       const bridgeError = this.error('NATIVE_PROTOCOL_ERROR', error instanceof Error ? error.message : String(error), true);
       this.recordError(bridgeError);
       throw bridgeError;
+    }
+  }
+
+  private async handleCoordinationRequest(socket: Socket, request: PipeRequest, sessionId: string): Promise<void> {
+    try {
+      const method = request.method as CoordinationPipeMethod;
+      const status = () => serializeCoordinationStatus(this.coordinator.status());
+      let result: unknown;
+      if (method === 'browser_get_clients') {
+        result = { clients: status().clients };
+      } else if (method === 'browser_lease_status') {
+        result = status();
+      } else if (method === 'browser_lease_acquire') {
+        const resource = parseLeaseResource(request.params?.resource);
+        const purpose = typeof request.params?.purpose === 'string' && request.params.purpose.trim()
+          ? request.params.purpose.trim()
+          : 'coordination';
+        const ttlMs = typeof request.params?.ttlMs === 'number' ? request.params.ttlMs : 30_000;
+        result = boundedLease(this.coordinator.acquire(sessionId, resource, purpose, ttlMs));
+        this.broadcastCoordinationStatus();
+      } else if (method === 'browser_lease_renew') {
+        const leaseId = request.params?.leaseId;
+        if (typeof leaseId !== 'string' || !leaseId.trim()) throw this.error('INVALID_REQUEST', 'leaseId is required', false);
+        const ttlMs = typeof request.params?.ttlMs === 'number' ? request.params.ttlMs : 30_000;
+        result = boundedLease(this.coordinator.renew(sessionId, leaseId, ttlMs));
+        this.broadcastCoordinationStatus();
+      } else {
+        const leaseId = request.params?.leaseId;
+        if (typeof leaseId !== 'string' || !leaseId.trim()) throw this.error('INVALID_REQUEST', 'leaseId is required', false);
+        this.coordinator.release(sessionId, leaseId);
+        result = { released: true, leaseId };
+        this.broadcastCoordinationStatus();
+      }
+      this.writePipe(socket, { type: 'response', id: request.id, ok: true, result } satisfies PipeResponse);
+    } catch (error) {
+      this.writePipe(socket, { type: 'response', id: request.id, ok: false, error: this.coordinatorError(error) } satisfies PipeResponse);
     }
   }
 
@@ -691,6 +765,30 @@ function isRuntimeMethod(value: string): value is 'browser_recipe_review' | 'bro
   return value === 'browser_recipe_review' || value === 'browser_replay_start' || value === 'browser_replay_step' || value === 'browser_run_export' || value === 'browser_run_generate_guide';
 }
 
+function isCoordinationMethod(value: string): value is CoordinationPipeMethod {
+  return value === 'browser_get_clients'
+    || value === 'browser_lease_acquire'
+    || value === 'browser_lease_renew'
+    || value === 'browser_lease_release'
+    || value === 'browser_lease_status';
+}
+
+function parseLeaseResource(value: unknown): `tab:${number}` | 'global:recorder' {
+  if (value === 'global:recorder') return value;
+  if (typeof value === 'string' && /^tab:\d+$/.test(value)) return value as `tab:${number}`;
+  throw { code: 'INVALID_REQUEST', message: 'resource must be global:recorder or tab:<id>', retryable: false } satisfies BridgeError;
+}
+
+function boundedLease(lease: { id: string; resource: string; purpose: string; state: string; expiresAt: string }): Record<string, string> {
+  return {
+    id: lease.id,
+    resource: lease.resource,
+    purpose: lease.purpose,
+    state: lease.state,
+    expiresAt: lease.expiresAt,
+  };
+}
+
 function isSupportedVersion(version: unknown): boolean {
   return version === BRIDGE_PROTOCOL_VERSION || version === '0.1.0';
 }
@@ -781,7 +879,7 @@ export async function testIdempotencyCacheSkipsRecordingLease(): Promise<{ acqui
     acquire: () => { acquireCount += 1; throw new Error('lease acquisition should be skipped'); },
   };
   (bridge as any).coordinationMode = 'enforce';
-  (bridge as any).idempotencyCompleted = new Map([['client-a:request-1', { expiresAt: Date.now() + 30_000, result: 'cached' }]]);
+  (bridge as any).idempotencyCompleted = new Map([['client-a:browser_record_start:record_start:request-1', { expiresAt: Date.now() + 30_000, result: 'cached' }]]);
   (bridge as any).idempotencyInFlight = new Map();
   (bridge as any).recordingLeases = new Map();
   (bridge as any).runtime = undefined;
