@@ -50,6 +50,8 @@ export function IdentityConsoleView({ onBack }: IdentityConsoleViewProps) {
     try { const result = await window.identityConsole.delete(identityId); if (!result.ok) setError(`${result.error?.code ?? 'DELETE_FAILED'}: ${result.error?.message ?? ''}`); else setIdentities((current) => current.filter((item) => item.manifest.identityId !== identityId)); }
     finally { setBusyIdentity(undefined); }
   };
+  const validateAll = async (): Promise<void> => { setLoading(true); try { const result = await window.identityConsole.validateAll(); if (!result.ok) setError(`${result.error?.code ?? 'VALIDATE_FAILED'}: ${result.error?.message ?? ''}`); else setError(`Validated ${result.data?.length ?? 0} identities. See operations log for details.`); } finally { setLoading(false); } };
+  const stopAll = async (): Promise<void> => { setLoading(true); try { const result = await window.identityConsole.stopAll(); if (!result.ok) setError(`${result.error?.code ?? 'STOP_ALL_FAILED'}: ${result.error?.message ?? ''}`); await refresh(); } finally { setLoading(false); } };
 
   return (
     <div className="identity-console">
@@ -66,6 +68,8 @@ export function IdentityConsoleView({ onBack }: IdentityConsoleViewProps) {
           <RefreshCw size={14} className={loading ? 'identity-console__spin' : undefined} />
           Refresh all
         </button>
+        <button className="identity-console__refresh-all" onClick={() => void validateAll()} disabled={loading}>Validate all</button>
+        <button className="identity-console__refresh-all" onClick={() => void stopAll()} disabled={loading}>Stop all</button>
       </div>
 
       {error && (
