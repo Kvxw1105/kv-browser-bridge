@@ -2,7 +2,6 @@ import { createHash } from 'node:crypto';
 import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { assertVersionConsistency } from './check-versions.mjs';
 import {
   commandWrapper,
   computerUseRcRequiredFiles,
@@ -92,6 +91,7 @@ export async function validateComputerUseRc(stage) {
 }
 
 export async function packageComputerUseRc() {
+  const { assertVersionConsistency } = await import('./check-versions.mjs');
   const version = await assertVersionConsistency();
   const stage = join(releaseRoot, `kv-computer-use-runtime-rc-v${version}`);
   await rm(stage, { recursive: true, force: true });
