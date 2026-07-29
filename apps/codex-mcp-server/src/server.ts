@@ -64,8 +64,10 @@ function boundedCoordinationResult(method: string, value: unknown): unknown {
     if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
     const source = item as Record<string, unknown>;
     const result: Record<string, unknown> = {};
+    if (typeof source.leaseId === 'string') result.leaseId = source.leaseId;
+    else if (typeof source.id === 'string') result.leaseId = source.id;
     for (const key of ['leaseId', 'resource', 'purpose', 'state', 'expiresAt', 'released']) {
-      if (typeof source[key] === 'string' || typeof source[key] === 'boolean') result[key] = source[key];
+      if (key !== 'leaseId' && (typeof source[key] === 'string' || typeof source[key] === 'boolean')) result[key] = source[key];
     }
     return Object.keys(result).length > 0 ? result : null;
   };

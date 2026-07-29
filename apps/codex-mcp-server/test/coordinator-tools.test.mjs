@@ -50,6 +50,15 @@ test('forwards exact methods and parameters, with status tools classified as rea
   assert.deepEqual(textResult(clientsResult), { clients: [{ clientId: 'codex', clientName: 'Codex', defaultTabId: 12 }] });
 });
 
+test('maps Bridge lease id to leaseId for acquire callers', async () => {
+  const { server, calls } = setup(async (method) => method === 'browser_lease_acquire'
+    ? { id: 'lease-1', resource: 'tab:12', purpose: 'upload', state: 'active', ownerSessionId: 'hidden' }
+    : {});
+  const result = textResult(await server._registeredTools.browser_lease_acquire.handler({ resource: 'tab:12', purpose: 'upload' }));
+  assert.deepEqual(result, { leaseId: 'lease-1', resource: 'tab:12', purpose: 'upload', state: 'active' });
+  assert.equal(calls[0].method, 'browser_lease_acquire');
+});
+
 test('bounds status output and strips transport secrets and browsing content', async () => {
   const { server } = setup(async () => ({
     mode: 'observe', pipeName: '\\\\.\\pipe\\secret', token: 'secret', url: 'https://private',
