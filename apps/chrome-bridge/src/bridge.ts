@@ -26,11 +26,17 @@ import {
   type PipeRequest,
   type PipeResponse,
   type BrowserAction,
+  type AgentCapability,
+  type AgentIdentity,
+  type CoordinationStatusView,
+  isAgentIdentity,
+  serializeCoordinationStatus,
 } from '@kv-browser-bridge/browser-protocol';
 import { JsonlLogger } from './logger.js';
 import { NativeMessagingChannel } from './native-channel.js';
 import { nativeDisconnectErrorFor } from './native-disconnect.js';
 import { KvRuntime, runtimeMode } from './runtime.js';
+import { CoordinatorError, MultiAgentCoordinator } from './coordinator.js';
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const MAX_REQUEST_TIMEOUT_MS = 5 * 60_000;
@@ -43,6 +49,17 @@ interface PendingRequest {
   method: string;
   startedAt: number;
   operationClass: BrowserRequest['operationClass'];
+}
+
+type BridgeSocket = Socket & {
+  kvSessionId?: string;
+  kvIdentity?: AgentIdentity;
+};
+
+interface RecordingLeases {
+  tabId: number;
+  recorderLeaseId: string;
+  tabLeaseId: string;
 }
 
 class ChromeBridge {
@@ -58,6 +75,12 @@ class ChromeBridge {
   private readonly idempotencyInFlight = new Map<string, Promise<unknown>>();
   private readonly idempotencyCompleted = new Map<string, { expiresAt: number; result?: unknown; error?: BridgeError }>();
   private readonly clients = new Set<Socket>();
+  private readonly coordinator = new MultiAgentCoordinator({
+    mode: coordinationMode(),
+    onConflict: (conflict) => this.logger.write('warn', 'coordination.conflict', { ...conflict }),
+  });
+  private readonly coordinationMode = coordinationMode();
+  private readonly recordingLeases = new Map<string, RecordingLeases>();
   private replay: { runId: string; recipe: Record<string, unknown>; nextStep: number } | undefined;
   private server: Server | undefined;
   private extensionConnected = false;
@@ -169,7 +192,7 @@ class ChromeBridge {
         const line = lineBuffer.slice(0, newline).trim();
         lineBuffer = lineBuffer.slice(newline + 1);
         if (!line) continue;
-        this.handlePipeLine(socket, line, authenticated, sessionId, (isAuthenticated) => {
+        this.handlePipeLine(socket as BridgeSocket, line, authenticated, sessionId, (isAuthenticated) => {
           authenticated = isAuthenticated;
           if (isAuthenticated && helloTimer) {
             clearTimeout(helloTimer);
@@ -182,11 +205,17 @@ class ChromeBridge {
     socket.on('close', () => {
       if (helloTimer) clearTimeout(helloTimer);
       this.clients.delete(socket);
+      const bridgeSocket = socket as BridgeSocket;
+      if (bridgeSocket.kvSessionId) {
+        this.coordinator.disconnect(bridgeSocket.kvSessionId);
+        this.recordingLeases.delete(bridgeSocket.kvSessionId);
+        this.broadcastCoordinationStatus();
+      }
     });
     socket.on('error', (error) => this.logger.write('debug', 'pipe.client_error', { message: error.message }));
   }
 
-  private handlePipeLine(socket: Socket, line: string, authenticated: boolean, sessionId: string, setAuthenticated: (value: boolean) => void): void {
+  private handlePipeLine(socket: BridgeSocket, line: string, authenticated: boolean, sessionId: string, setAuthenticated: (value: boolean) => void): void {
     let message: unknown;
     try {
       message = JSON.parse(line);
@@ -206,13 +235,29 @@ class ChromeBridge {
           socket.destroy();
           return;
         }
+        const identity = identityFromHello(rpcHello.params, sessionId);
+        if (!identity) {
+          this.writePipe(socket, this.pipeError(rpcHello.id, 'INVALID_REQUEST', 'Invalid Agent identity', false));
+          socket.destroy();
+          return;
+        }
+        try {
+          this.coordinator.connect(identity, sessionId);
+        } catch (error) {
+          this.writePipe(socket, this.pipeError(rpcHello.id, 'INVALID_REQUEST', error instanceof Error ? error.message : String(error), false));
+          socket.destroy();
+          return;
+        }
         setAuthenticated(true);
-        (socket as Socket & { kvClientId?: string }).kvClientId = clientName ?? 'anonymous';
+        socket.kvSessionId = sessionId;
+        socket.kvIdentity = identity;
+        (socket as Socket & { kvClientId?: string }).kvClientId = identity.clientId;
         this.writePipe(socket, {
           id: rpcHello.id,
           result: { accepted: true, protocolVersion: BRIDGE_PROTOCOL_VERSION, sessionId, bridge: this.status() },
         });
         this.logger.write('info', 'pipe.client_authenticated', { clientName });
+        this.broadcastCoordinationStatus();
         return;
       }
       if (!isPipeHello(message)) {
@@ -228,8 +273,23 @@ class ChromeBridge {
         socket.destroy();
         return;
       }
+      const identity = identityFromHello(message, sessionId);
+      if (!identity) {
+        this.writePipe(socket, this.pipeError('__hello__', 'INVALID_REQUEST', 'Invalid Agent identity', false));
+        socket.destroy();
+        return;
+      }
+      try {
+        this.coordinator.connect(identity, sessionId);
+      } catch (error) {
+        this.writePipe(socket, this.pipeError('__hello__', 'INVALID_REQUEST', error instanceof Error ? error.message : String(error), false));
+        socket.destroy();
+        return;
+      }
       setAuthenticated(true);
-      (socket as Socket & { kvClientId?: string }).kvClientId = clientName ?? 'anonymous';
+      socket.kvSessionId = sessionId;
+      socket.kvIdentity = identity;
+      (socket as Socket & { kvClientId?: string }).kvClientId = identity.clientId;
       const ack: PipeHelloAck = {
         type: 'hello:ack',
         version: BRIDGE_PROTOCOL_VERSION,
@@ -238,6 +298,7 @@ class ChromeBridge {
       };
       this.writePipe(socket, ack);
       this.logger.write('info', 'pipe.client_authenticated', { clientName });
+      this.broadcastCoordinationStatus();
       return;
     }
 
@@ -245,10 +306,11 @@ class ChromeBridge {
       this.writePipe(socket, this.pipeError('__protocol__', 'INVALID_REQUEST', 'Unsupported Pipe message', false));
       return;
     }
-    void this.handlePipeRequest(socket, message, sessionId);
+    void this.handlePipeRequest(socket, message, socket.kvSessionId ?? sessionId);
   }
 
-  private async handlePipeRequest(socket: Socket, request: PipeRequest, authenticatedSessionId: string): Promise<void> {
+  private async handlePipeRequest(socket: BridgeSocket, request: PipeRequest, authenticatedSessionId: string): Promise<void> {
+    this.coordinator.touch(authenticatedSessionId);
     if (request.method === 'browser_connection_status') {
       this.writePipe(socket, { type: 'response', id: request.id, ok: true, result: this.status() } satisfies PipeResponse);
       return;
@@ -261,13 +323,30 @@ class ChromeBridge {
       this.writePipe(socket, this.pipeError(request.id, 'INVALID_REQUEST', `Unsupported browser method: ${request.method}`, false));
       return;
     }
-    const clientIdentity = (socket as Socket & { kvClientId?: string }).kvClientId ?? authenticatedSessionId;
+    const clientIdentity = socket.kvIdentity?.clientId ?? authenticatedSessionId;
     const action = browserActionFromTool(request.method);
+    const sessionId = socket.kvSessionId ?? authenticatedSessionId;
+    const originalParams = { ...(request.params ?? {}) };
+    let params: Record<string, unknown>;
+    try {
+      params = this.resolveCoordinationParams(sessionId, action, originalParams);
+      if (action === 'switch_tab' && typeof params.tabId === 'number') {
+        this.coordinator.setDefaultTab(sessionId, params.tabId);
+        this.broadcastCoordinationStatus();
+      }
+      if (action === 'record_start' && typeof params.tabId === 'number') {
+        this.acquireRecordingLeases(sessionId, params.tabId, params.intent);
+      }
+    } catch (error) {
+      const bridgeError = this.coordinatorError(error);
+      this.writePipe(socket, { type: 'response', id: request.id, ok: false, error: bridgeError } satisfies PipeResponse);
+      return;
+    }
     const eventId = this.runtimeSafe(() => this.runtime?.recordRequest(
       request.method,
-      request.params ?? {},
+      params,
       operationClassFor(action),
-      typeof request.params?.tabId === 'number' ? request.params.tabId : undefined,
+      typeof params.tabId === 'number' ? params.tabId : undefined,
     ));
     const cacheKey = `${clientIdentity}:${request.idempotencyKey ?? request.id}`;
     if (this.idempotencyCompleted.size > 1024) {
@@ -286,12 +365,13 @@ class ChromeBridge {
     try {
       let execution = this.idempotencyInFlight.get(cacheKey);
       if (!execution) {
-        execution = this.forwardBrowserRequest(request.id, authenticatedSessionId, action, request.params ?? {}, request.timeoutMs, request.deadlineAt);
+        execution = this.coordinateBrowserRequest(request.id, sessionId, action, params, request.timeoutMs, request.deadlineAt);
         this.idempotencyInFlight.set(cacheKey, execution);
       }
       const result = await execution;
       this.idempotencyCompleted.set(cacheKey, { expiresAt: Date.now() + 30_000, result });
-      if (request.method === 'browser_screenshot') this.persistScreenshotArtifact(result, request.params?.artifactPath, request.params?.artifactOnly === true);
+      if (request.method === 'browser_screenshot') this.persistScreenshotArtifact(result, params.artifactPath, params.artifactOnly === true);
+      if (action === 'record_stop') this.releaseRecordingLeases(sessionId, params.tabId, false);
       this.runtimeSafe(() => {
         this.runtime?.recordResult(eventId, result);
         if (request.method === 'browser_screenshot' && isRecord(result)) this.runtime?.addArtifact(eventId, 'screenshot', result.artifactPath);
@@ -299,15 +379,92 @@ class ChromeBridge {
       });
       this.writePipe(socket, { type: 'response', id: request.id, ok: true, result } satisfies PipeResponse);
     } catch (error) {
-      const bridgeError = isBridgeError(error)
-        ? error
-        : this.error('INTERNAL_ERROR', error instanceof Error ? error.message : String(error), false);
+      const bridgeError = this.coordinatorError(error);
       this.idempotencyCompleted.set(cacheKey, { expiresAt: Date.now() + 30_000, error: bridgeError });
       this.runtimeSafe(() => this.runtime?.recordResult(eventId, undefined, bridgeError));
+      if (action === 'record_start') this.releaseRecordingLeases(sessionId, params.tabId, bridgeError.code === 'UNKNOWN_OUTCOME');
+      if (bridgeError.code === 'UNKNOWN_OUTCOME' && typeof params.tabId === 'number') this.quarantineTab(sessionId, params.tabId);
+      if (action === 'record_stop') this.releaseRecordingLeases(sessionId, params.tabId, bridgeError.code === 'UNKNOWN_OUTCOME');
       this.writePipe(socket, { type: 'response', id: request.id, ok: false, error: bridgeError } satisfies PipeResponse);
     } finally {
       this.idempotencyInFlight.delete(cacheKey);
     }
+  }
+
+  private resolveCoordinationParams(sessionId: string, action: BrowserAction, params: Record<string, unknown>): Record<string, unknown> {
+    const resolved = { ...params };
+    const suppliedTabId = typeof resolved.tabId === 'number' ? resolved.tabId : undefined;
+    if (!actionRequiresTab(action)) return resolved;
+    const tabId = this.coordinator.resolveTab(sessionId, suppliedTabId);
+    if (tabId !== undefined) {
+      resolved.tabId = tabId;
+      return resolved;
+    }
+    if (this.coordinationMode === 'observe') {
+      this.logger.write('warn', 'coordination.missing_tab', { action, sessionId });
+      return resolved;
+    }
+    if (this.coordinationMode === 'enforce') {
+      throw this.error('TAB_ID_REQUIRED', `browser_${action} requires a session target tab`, false, { action });
+    }
+    return resolved;
+  }
+
+  private coordinateBrowserRequest(
+    requestId: string,
+    sessionId: string,
+    action: BrowserAction,
+    params: Record<string, unknown>,
+    requestedTimeout?: number,
+    requestedDeadline?: number,
+  ): Promise<unknown> {
+    const tabId = typeof params.tabId === 'number' ? params.tabId : undefined;
+    const execute = () => this.forwardBrowserRequest(requestId, sessionId, action, params, requestedTimeout, requestedDeadline);
+    if (tabId === undefined || operationClassFor(action) === 'read') return execute();
+    this.coordinator.assertWriteAllowed(sessionId, tabId);
+    return this.coordinator.runTabWrite(tabId, execute);
+  }
+
+  private acquireRecordingLeases(sessionId: string, tabId: number, purpose: unknown): void {
+    const existing = this.recordingLeases.get(sessionId);
+    if (existing) return;
+    const label = typeof purpose === 'string' && purpose.trim() ? purpose.trim() : 'recording';
+    const recorderLease = this.coordinator.acquire(sessionId, 'global:recorder', label, 300_000);
+    try {
+      const tabLease = this.coordinator.acquire(sessionId, `tab:${tabId}`, label, 300_000);
+      this.recordingLeases.set(sessionId, { tabId, recorderLeaseId: recorderLease.id, tabLeaseId: tabLease.id });
+      this.broadcastCoordinationStatus();
+    } catch (error) {
+      try { this.coordinator.release(sessionId, recorderLease.id); } catch { /* best effort rollback */ }
+      throw error;
+    }
+  }
+
+  private releaseRecordingLeases(sessionId: string, tabId: unknown, ambiguous: boolean): void {
+    const leases = this.recordingLeases.get(sessionId);
+    const targetTabId = typeof tabId === 'number' ? tabId : leases?.tabId;
+    if (leases) {
+      try { this.coordinator.release(sessionId, leases.tabLeaseId); } catch { /* expired/disconnected */ }
+      try { this.coordinator.release(sessionId, leases.recorderLeaseId); } catch { /* expired/disconnected */ }
+      this.recordingLeases.delete(sessionId);
+    }
+    if (ambiguous && targetTabId !== undefined) this.quarantineTab(sessionId, targetTabId);
+    this.broadcastCoordinationStatus();
+  }
+
+  private quarantineTab(sessionId: string, tabId: number): void {
+    try {
+      this.coordinator.quarantineTab(sessionId, tabId);
+      this.broadcastCoordinationStatus();
+    } catch (error) {
+      this.logger.write('warn', 'coordination.quarantine_failed', { sessionId, tabId, message: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
+  private coordinatorError(error: unknown): BridgeError {
+    if (error instanceof CoordinatorError) return this.error(error.code, error.message, error.retryable, error.details);
+    if (isBridgeError(error)) return error;
+    return this.error('INTERNAL_ERROR', error instanceof Error ? error.message : String(error), false);
   }
 
   private forwardBrowserRequest(requestId: string, sessionId: string, action: BrowserRequest['action'], params: Record<string, unknown>, requestedTimeout?: number, requestedDeadline?: number): Promise<unknown> {
@@ -479,6 +636,17 @@ class ChromeBridge {
     for (const socket of this.clients) this.writePipe(socket, event);
   }
 
+  private broadcastCoordinationStatus(): void {
+    const status: CoordinationStatusView = serializeCoordinationStatus(this.coordinator.status());
+    const event: PipeEvent = { type: 'event', event: 'coordination:status', data: status };
+    for (const socket of this.clients) this.writePipe(socket, event);
+    try {
+      this.sendNative({ type: 'bridge:coordination_status', status });
+    } catch (error) {
+      this.logger.write('debug', 'coordination.native_status_unavailable', { message: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
   private writePipe(socket: Socket, message: unknown): void {
     if (!socket.destroyed) socket.write(`${JSON.stringify(message)}\n`);
   }
@@ -525,16 +693,41 @@ function isSupportedVersion(version: unknown): boolean {
   return version === BRIDGE_PROTOCOL_VERSION || version === '0.1.0';
 }
 
-function asRpcHello(value: unknown): { id: string; params: { token: string; client?: string; version?: unknown } } | undefined {
+function coordinationMode(): 'off' | 'observe' | 'enforce' {
+  const value = process.env.KBB_COORDINATION_MODE;
+  return value === 'observe' || value === 'enforce' ? value : 'off';
+}
+
+function actionRequiresTab(action: BrowserAction): boolean {
+  return !new Set<BrowserAction>([
+    'get_tabs', 'new_tab', 'download_status', 'list_bookmarks', 'open_bookmark', 'list_extensions',
+  ]).has(action);
+}
+
+function identityFromHello(value: unknown, sessionId: string): AgentIdentity | undefined {
+  if (!isRecord(value)) return undefined;
+  const hasIdentityFields = 'clientId' in value || 'instanceId' in value || 'capabilities' in value;
+  if (hasIdentityFields) {
+    const candidate = {
+      clientId: value.clientId,
+      clientName: value.clientName ?? value.client,
+      instanceId: value.instanceId,
+      capabilities: value.capabilities,
+    };
+    return isAgentIdentity(candidate) ? candidate : undefined;
+  }
+  const clientName = typeof value.clientName === 'string' ? value.clientName : typeof value.client === 'string' ? value.client : 'legacy-client';
+  return isAgentIdentity({ clientId: clientName, clientName, instanceId: sessionId, capabilities: ['read', 'write', 'record'] })
+    ? { clientId: clientName, clientName, instanceId: sessionId, capabilities: ['read', 'write', 'record'] }
+    : undefined;
+}
+
+function asRpcHello(value: unknown): { id: string; params: Record<string, unknown> & { token: string; client?: string; version?: unknown } } | undefined {
   if (!isRecord(value) || typeof value.id !== 'string' || value.method !== 'hello' || !isRecord(value.params)) return undefined;
   if (typeof value.params.token !== 'string') return undefined;
   return {
     id: value.id,
-    params: {
-      token: value.params.token,
-      client: typeof value.params.client === 'string' ? value.params.client : undefined,
-      version: value.params.version,
-    },
+    params: value.params as Record<string, unknown> & { token: string; client?: string; version?: unknown },
   };
 }
 
