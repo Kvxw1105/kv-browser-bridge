@@ -38,7 +38,7 @@ export interface CoordinationStatus {
 export interface CoordinationStatusView {
   mode: CoordinatorMode;
   clients: Array<Pick<AgentSession, 'clientId' | 'clientName' | 'defaultTabId'>>;
-  leases: Array<Pick<ResourceLease, 'id' | 'resource' | 'purpose' | 'state' | 'expiresAt'>>;
+  leases: Array<Pick<ResourceLease, 'resource' | 'purpose' | 'state' | 'expiresAt'>>;
 }
 
 export type CoordinationPipeMethod =

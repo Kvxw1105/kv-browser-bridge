@@ -51,7 +51,7 @@ test('round-trips redacted coordination status transport messages', () => {
       clientId: 'client-1', clientName: 'Coordinator', defaultTabId: 42,
     }],
     leases: [{
-      id: 'lease-1', resource: 'tab:42', purpose: 'recording', state: 'active', expiresAt: '2026-07-30T00:01:00.000Z',
+      resource: 'tab:42', purpose: 'recording', state: 'active', expiresAt: '2026-07-30T00:01:00.000Z',
     }],
   };
   const messages = [
@@ -59,7 +59,9 @@ test('round-trips redacted coordination status transport messages', () => {
     { type: 'bridge:coordination_status', status: statusView },
   ];
   const payload = JSON.stringify(messages);
-  assert.deepEqual(JSON.parse(payload), messages);
+  const roundTripped = JSON.parse(payload);
+  assert.deepEqual(roundTripped, messages);
+  assert.deepEqual(Object.keys(roundTripped[0].data.leases[0]).sort(), ['expiresAt', 'purpose', 'resource', 'state']);
   for (const field of ['instanceId', 'sessionId', 'ownerSessionId', 'connectedAt', 'lastSeenAt', 'acquiredAt']) {
     assert.equal(payload.includes(field), false, field);
   }
