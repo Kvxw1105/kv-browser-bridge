@@ -1,8 +1,15 @@
 /// <reference types="vite/client" />
 import type { ClientMessage, ServerMessage } from '@claude-code-browser/shared';
+import type { IdentityConsoleApiResult, IdentityConsoleItem, IdentityConsoleOperationResult } from '../shared/identity-console';
 
 declare global {
   interface Window {
+    identityConsole: {
+      list(): Promise<IdentityConsoleApiResult<IdentityConsoleItem[]>>;
+      status(identityId: string): Promise<IdentityConsoleApiResult<IdentityConsoleItem>>;
+      start(identityId: string): Promise<IdentityConsoleApiResult<IdentityConsoleOperationResult>>;
+      stop(identityId: string): Promise<IdentityConsoleApiResult<IdentityConsoleOperationResult>>;
+    };
     ccb: {
       /** True in Electron (preload bridge), false in plain browser (web-transport polyfill). */
       isElectron: boolean;
