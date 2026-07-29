@@ -9,12 +9,23 @@ $form.StartPosition = 'CenterScreen'
 $form.Size = New-Object System.Drawing.Size(520, 240)
 $form.TopMost = $false
 
-$input = New-Object System.Windows.Forms.TextBox
-$input.Name = 'InputField'
-$input.AccessibleName = 'Integration Input'
-$input.Location = New-Object System.Drawing.Point(24, 30)
-$input.Size = New-Object System.Drawing.Size(450, 32)
-$form.Controls.Add($input)
+if (-not [string]::IsNullOrWhiteSpace($env:KV_UIA_HARNESS_DIAGNOSTIC_PATH)) {
+  $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+  $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+  $diagnostic = [ordered]@{
+    processId = $PID
+    sessionId = (Get-Process -Id $PID).SessionId
+    isElevated = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+  } | ConvertTo-Json -Compress
+  [IO.File]::WriteAllText($env:KV_UIA_HARNESS_DIAGNOSTIC_PATH, $diagnostic, [Text.Encoding]::UTF8)
+}
+
+$inputField = New-Object System.Windows.Forms.TextBox
+$inputField.Name = 'InputField'
+$inputField.AccessibleName = 'Integration Input'
+$inputField.Location = New-Object System.Drawing.Point(24, 30)
+$inputField.Size = New-Object System.Drawing.Size(450, 32)
+$form.Controls.Add($inputField)
 
 $apply = New-Object System.Windows.Forms.Button
 $apply.Name = 'ApplyButton'
@@ -33,11 +44,23 @@ $result.Location = New-Object System.Drawing.Point(24, 142)
 $form.Controls.Add($result)
 
 $apply.Add_Click({
-  $applied = "Applied:$($input.Text)"
-  $result.Text = $applied
-  $form.Text = "KV UIA Integration Harness - $applied"
-  if (-not [string]::IsNullOrWhiteSpace($env:KV_UIA_HARNESS_RESULT_PATH)) {
-    [IO.File]::WriteAllText($env:KV_UIA_HARNESS_RESULT_PATH, $applied, [Text.Encoding]::UTF8)
+  try {
+    if (-not [string]::IsNullOrWhiteSpace($env:KV_UIA_HARNESS_EVENT_PATH)) {
+      [IO.File]::WriteAllText($env:KV_UIA_HARNESS_EVENT_PATH, 'entered', [Text.Encoding]::UTF8)
+    }
+    $applied = "Applied:$($inputField.Text)"
+    $result.Text = $applied
+    $result.AccessibleName = $applied
+    $form.Text = "KV UIA Integration Harness - $applied"
+    if (-not [string]::IsNullOrWhiteSpace($env:KV_UIA_HARNESS_RESULT_PATH)) {
+      [IO.File]::WriteAllText($env:KV_UIA_HARNESS_RESULT_PATH, $applied, [Text.Encoding]::UTF8)
+    }
+  }
+  catch {
+    if (-not [string]::IsNullOrWhiteSpace($env:KV_UIA_HARNESS_EVENT_PATH)) {
+      [IO.File]::WriteAllText($env:KV_UIA_HARNESS_EVENT_PATH, "error:$($_.Exception.ToString())", [Text.Encoding]::UTF8)
+    }
+    throw
   }
 })
 

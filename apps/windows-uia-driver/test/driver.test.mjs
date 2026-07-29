@@ -131,10 +131,17 @@ test('returns a bounded Windows observation envelope', async () => {
 
 test('controls a real Windows form through UI Automation', { timeout: 45_000, skip: !runInteractiveE2e }, async () => {
   const resultPath = join(tmpdir(), `kv-uia-result-${process.pid}-${Date.now()}.txt`);
+  const diagnosticPath = join(tmpdir(), `kv-uia-diagnostic-${process.pid}-${Date.now()}.json`);
+  const eventPath = join(tmpdir(), `kv-uia-event-${process.pid}-${Date.now()}.txt`);
   const form = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', harness], {
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: false,
-    env: { ...process.env, KV_UIA_HARNESS_RESULT_PATH: resultPath },
+    env: {
+      ...process.env,
+      KV_UIA_HARNESS_RESULT_PATH: resultPath,
+      KV_UIA_HARNESS_DIAGNOSTIC_PATH: diagnosticPath,
+      KV_UIA_HARNESS_EVENT_PATH: eventPath,
+    },
   });
   let formStderr = '';
   form.stderr.setEncoding('utf8');
@@ -142,6 +149,15 @@ test('controls a real Windows form through UI Automation', { timeout: 45_000, sk
   const session = startDriver();
 
   try {
+    const harnessDiagnostic = await waitFor(async () => {
+      try { return JSON.parse((await readFile(diagnosticPath, 'utf8')).replace(/^\uFEFF/, '')); }
+      catch { return undefined; }
+    }, 'UIA harness diagnostics were not written');
+    const driverStatus = await session.request('status');
+    assert.equal(driverStatus.ok, true);
+    assert.equal(driverStatus.result.sessionId, harnessDiagnostic.sessionId);
+    assert.equal(driverStatus.result.isElevated, harnessDiagnostic.isElevated);
+
     const window = await waitFor(async () => {
       const observed = await session.request('observe', { maxWindows: 100, maxElements: 5, maxDepth: 1 });
       assert.equal(observed.ok, true);
@@ -163,7 +179,7 @@ test('controls a real Windows form through UI Automation', { timeout: 45_000, sk
     assert.ok(apply?.ref, 'button should expose a stable UIA reference');
     assert.equal(apply.canInvoke, true);
     assert.ok(resultLabel?.ref, 'result label should expose a stable UIA reference');
-    assert.equal(resultLabel.name, 'Waiting');
+    assert.equal(resultLabel.name, 'Integration Result');
 
     const value = 'runtime-e2e-value';
     const setResult = await session.request('set_value_ref', {
@@ -192,8 +208,35 @@ test('controls a real Windows form through UI Automation', { timeout: 45_000, sk
       targetRef: apply.ref,
     });
     assert.equal(invokeResult.ok, true);
+    assert.equal(invokeResult.result.dispatchMethod, 'win32-bm-click');
+    assert.ok(Number.isInteger(invokeResult.result.nativeWindowHandle));
+    assert.notEqual(invokeResult.result.nativeWindowHandle, 0);
+    assert.equal(invokeResult.result.nativeProcessId, form.pid);
+    assert.match(invokeResult.result.nativeWindowClassName, /^WindowsForms10\.BUTTON/);
 
     const expected = `Applied:${value}`;
+    const eventState = await waitFor(async () => {
+      try {
+        const content = (await readFile(eventPath, 'utf8')).replace(/^\uFEFF/, '');
+        return content.startsWith('entered') || content.startsWith('error:') ? content : undefined;
+      } catch { return undefined; }
+    }, 'button invocation did not enter the harness Click handler');
+    assert.ok(!eventState.startsWith('error:'), eventState);
+
+    await waitFor(async () => {
+      const result = await session.request('observe', {
+        windowHandle: window.handle,
+        maxWindows: 100,
+        maxElements: 50,
+        maxDepth: 6,
+      });
+      assert.equal(result.ok, true);
+      const current = result.result.elements.find((element) => element.automationId === 'ResultLabel');
+      return current?.name === expected && result.result.targetWindow?.name === `KV UIA Integration Harness - ${expected}`
+        ? current
+        : undefined;
+    }, 'button invocation did not update the result label and harness title');
+
     const applied = await waitFor(async () => {
       try {
         const content = (await readFile(resultPath, 'utf8')).replace(/^\uFEFF/, '');
@@ -208,6 +251,8 @@ test('controls a real Windows form through UI Automation', { timeout: 45_000, sk
     await once(form, 'exit').catch(() => undefined);
     await session.close();
     await rm(resultPath, { force: true });
+    await rm(diagnosticPath, { force: true });
+    await rm(eventPath, { force: true });
     assert.equal(formStderr, '');
   }
 });

@@ -1,4 +1,6 @@
 using System.Runtime.InteropServices;
+using System.Security.Principal;
+using System.Text;
 using System.Text.Json;
 using System.Windows.Automation;
 
@@ -66,6 +68,9 @@ internal static class Program
                         "list_windows", "observe_foreground", "observe_window",
                         "focus_window", "invoke_ref", "set_value_ref",
                     },
+                    processId = Environment.ProcessId,
+                    sessionId = GetCurrentSessionId(),
+                    isElevated = IsCurrentProcessElevated(),
                 }),
                 "observe" => Success(request.Id, Observe(request.Params)),
                 "focus_window" => Success(request.Id, FocusWindow(request.Params)),
@@ -167,9 +172,15 @@ internal static class Program
 
         var nativeWindowHandle = current.NativeWindowHandle;
         string dispatchMethod;
+        string? nativeWindowClassName = null;
+        uint? nativeProcessId = null;
+        ulong? nativeDispatchResult = null;
         if (current.ControlType == ControlType.Button && nativeWindowHandle != 0 && IsWindow(new IntPtr(nativeWindowHandle)))
         {
             _ = EnsureForegroundWindow(windowHandle);
+            nativeWindowClassName = GetWindowClassName(new IntPtr(nativeWindowHandle));
+            _ = GetWindowThreadProcessId(new IntPtr(nativeWindowHandle), out var processId);
+            nativeProcessId = processId;
             var dispatched = SendMessageTimeout(
                 new IntPtr(nativeWindowHandle),
                 BmClick,
@@ -177,7 +188,7 @@ internal static class Program
                 IntPtr.Zero,
                 SmtoAbortIfHung,
                 NativeInvokeTimeoutMs,
-                out _);
+                out var result);
             if (dispatched == IntPtr.Zero)
             {
                 var nativeError = Marshal.GetLastWin32Error();
@@ -186,6 +197,7 @@ internal static class Program
                     $"Native button dispatch failed for {targetRef}. Win32Error={nativeError}.",
                     true);
             }
+            nativeDispatchResult = result.ToUInt64();
             dispatchMethod = "win32-bm-click";
         }
         else
@@ -201,6 +213,9 @@ internal static class Program
             targetRef,
             dispatchMethod,
             nativeWindowHandle,
+            nativeWindowClassName,
+            nativeProcessId,
+            nativeDispatchResult,
             element = TryMapElement(element, 0),
         };
     }
@@ -442,9 +457,34 @@ internal static class Program
         uint timeout,
         out UIntPtr result);
 
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetClassName(IntPtr hWnd, StringBuilder className, int maxCount);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool IsWindow(IntPtr hWnd);
+
+    private static string GetWindowClassName(IntPtr hWnd)
+    {
+        var buffer = new StringBuilder(256);
+        _ = GetClassName(hWnd, buffer, buffer.Capacity);
+        return buffer.ToString();
+    }
+
+    private static bool IsCurrentProcessElevated()
+    {
+        using var identity = WindowsIdentity.GetCurrent();
+        return new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
+    }
+
+    private static int GetCurrentSessionId()
+    {
+        using var process = System.Diagnostics.Process.GetCurrentProcess();
+        return process.SessionId;
+    }
 }
 
 internal sealed class DriverFaultException(string code, string message, bool retryable) : Exception(message)
@@ -458,7 +498,13 @@ internal sealed record DriverResponse(string? Id, bool Ok, object? Result, Drive
 internal sealed record DriverError(string Code, string Message, bool Retryable);
 internal sealed record WindowObservation(long Handle, string Name, string ClassName, int ProcessId, bool IsEnabled, bool IsOffscreen, RectObservation Bounds);
 internal sealed record ElementObservation(string? Ref, int Depth, string Name, string AutomationId, string ClassName, string? ControlType, string? Value, bool IsEnabled, bool IsOffscreen, bool IsKeyboardFocusable, bool CanInvoke, bool CanSetValue, RectObservation Bounds);
-internal sealed record RectObservation(double X, double Y, double Width, double Height)
+internal sealed record RectObservation(double? X, double? Y, double? Width, double? Height)
 {
-    public static RectObservation From(System.Windows.Rect rect) => new(rect.X, rect.Y, rect.Width, rect.Height);
+    public static RectObservation From(System.Windows.Rect rect) => new(
+        FiniteOrNull(rect.X),
+        FiniteOrNull(rect.Y),
+        FiniteOrNull(rect.Width),
+        FiniteOrNull(rect.Height));
+
+    private static double? FiniteOrNull(double value) => double.IsFinite(value) ? value : null;
 }
