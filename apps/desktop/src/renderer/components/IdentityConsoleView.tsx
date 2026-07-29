@@ -8,9 +8,10 @@ import '../identity-console.css';
 interface IdentityConsoleViewProps {
   onBack(): void;
   onEdit(manifest: IdentityManifest): void;
+  onCreate(): void;
 }
 
-export function IdentityConsoleView({ onBack, onEdit }: IdentityConsoleViewProps) {
+export function IdentityConsoleView({ onBack, onEdit, onCreate }: IdentityConsoleViewProps) {
   const [identities, setIdentities] = useState<IdentityConsoleItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyIdentity, setBusyIdentity] = useState<string>();
@@ -89,7 +90,8 @@ export function IdentityConsoleView({ onBack, onEdit }: IdentityConsoleViewProps
         <div className="identity-console__empty"><Loader2 size={18} className="identity-console__spin" /> Loading identities…</div>
       ) : identities.length === 0 ? (
         <div className="identity-console__empty">
-          No generated identity manifests were found. Run the Windows preparation and manifest generation commands first.
+          <p>No identities yet. Create your first isolated browser identity.</p>
+          <button className="identity-console__refresh-all" onClick={onCreate}>Create Identity</button>
         </div>
       ) : (
         <div className="identity-console__list">
@@ -111,7 +113,7 @@ export function IdentityConsoleView({ onBack, onEdit }: IdentityConsoleViewProps
                   <div><dt>Proxy</dt><dd>{identity.manifest.proxy.protocol}://{identity.manifest.proxy.host}:{identity.manifest.proxy.port}</dd></div>
                   <div><dt>Profile</dt><dd title={identity.manifest.browser.userDataDir}>{identity.manifest.browser.userDataDir}</dd></div>
                   <div><dt>Public IP</dt><dd>{identity.publicIp ?? 'Not verified'}</dd></div>
-                  <div><dt>PID</dt><dd>{identity.runtime.pid ?? '—'}</dd></div>
+                  <div><dt>PID</dt><dd>{identity.runtime.alive ? identity.runtime.pid ?? 'Unknown' : 'Not running'}</dd></div>
                 </dl>
 
                 {identity.lastError && (
