@@ -102,6 +102,18 @@ const api = {
 
   /** App-level shell controls. */
   app: {
+    isWindows: process.platform === 'win32',
+    window: {
+      minimize(): Promise<void> { return ipcRenderer.invoke('window:minimize'); },
+      toggleMaximize(): Promise<boolean> { return ipcRenderer.invoke('window:toggleMaximize'); },
+      close(): Promise<void> { return ipcRenderer.invoke('window:close'); },
+      isMaximized(): Promise<boolean> { return ipcRenderer.invoke('window:isMaximized'); },
+      onMaximizedChange(cb: (maximized: boolean) => void): () => void {
+        const handler = (_event: unknown, maximized: boolean) => cb(maximized);
+        ipcRenderer.on('window:maximized-change', handler);
+        return () => ipcRenderer.removeListener('window:maximized-change', handler);
+      },
+    },
     /** Quit the desktop app immediately, no confirmation. */
     quit(): Promise<void> {
       return ipcRenderer.invoke('app:quit');

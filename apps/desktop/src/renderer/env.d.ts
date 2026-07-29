@@ -59,6 +59,14 @@ declare global {
         remove(path: string): Promise<Array<{ path: string; name: string; lastOpenedAt: number }>>;
       };
       app: {
+        isWindows: boolean;
+        window: {
+          minimize(): Promise<void>;
+          toggleMaximize(): Promise<boolean>;
+          close(): Promise<void>;
+          isMaximized(): Promise<boolean>;
+          onMaximizedChange(cb: (maximized: boolean) => void): () => void;
+        };
         quit(): Promise<void>;
         onCmdW(cb: () => void): () => void;
         onCmdQDown(cb: () => void): () => void;
