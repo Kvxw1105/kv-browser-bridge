@@ -1,6 +1,6 @@
 export type OperationClass = 'read' | 'non_idempotent_write';
 
-const reads = new Set(['browser_get_tabs', 'browser_find', 'browser_download_status', 'browser_list_bookmarks', 'browser_list_extensions', 'browser_snapshot', 'browser_screenshot', 'browser_wait_for', 'browser_get_text', 'browser_get_url', 'browser_connection_status']);
+const reads = new Set(['browser_get_tabs', 'browser_find', 'browser_download_status', 'browser_list_bookmarks', 'browser_list_extensions', 'browser_snapshot', 'browser_screenshot', 'browser_wait_for', 'browser_get_text', 'browser_get_url', 'browser_connection_status', 'browser_get_clients', 'browser_lease_status']);
 
 export function operationClassForMethod(method: string): OperationClass {
   return reads.has(method) ? 'read' : 'non_idempotent_write';
