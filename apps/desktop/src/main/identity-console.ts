@@ -1,12 +1,25 @@
 import { app, ipcMain } from 'electron';
-import { join } from 'node:path';
+import { existsSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { IdentityConsoleService } from '../../../chrome-bridge/src/identity/console-service.js';
 import type { IdentityConsoleApiResult, IdentityConsoleItem, IdentityConsoleOperationResult } from '../shared/identity-console.js';
 
 let service: IdentityConsoleService | undefined;
 
+export function resolveIdentityConsoleDir(
+  env: NodeJS.ProcessEnv = process.env,
+  cwd = process.cwd(),
+  appDataDir = join(app.getPath('userData'), 'identity-console'),
+): string {
+  const configured = env['KV_BROWSER_IDENTITY_HOME']?.trim();
+  if (configured) return resolve(configured);
+  const repositoryLocal = resolve(cwd, 'local');
+  if (existsSync(repositoryLocal)) return repositoryLocal;
+  return appDataDir;
+}
+
 function getService(): IdentityConsoleService {
-  if (!service) service = new IdentityConsoleService(join(app.getPath('userData'), 'identity-console'));
+  if (!service) service = new IdentityConsoleService(resolveIdentityConsoleDir());
   return service;
 }
 
