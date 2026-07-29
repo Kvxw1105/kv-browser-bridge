@@ -29,6 +29,28 @@ test('actual ChromeBridge native-error handler rejects a seeded write as unknown
   assert.equal(error.retryable, false);
 });
 
+test('native request routing keeps same external IDs isolated across sessions', async () => {
+  process.env.KV_BRIDGE_TEST = '1';
+  const { testNativeRequestRouting } = await import('../dist/bridge.js');
+  const routed = await testNativeRequestRouting();
+  assert.equal(new Set(routed.requestIds).size, 2);
+  assert.deepEqual(routed.results, ['first', 'second']);
+});
+
+test('idempotency cache hit skips record-start lease acquisition', async () => {
+  process.env.KV_BRIDGE_TEST = '1';
+  const { testIdempotencyCacheSkipsRecordingLease } = await import('../dist/bridge.js');
+  const result = await testIdempotencyCacheSkipsRecordingLease();
+  assert.equal(result.acquireCount, 0);
+  assert.deepEqual(result.response, { type: 'response', id: 'request-1', ok: true, result: 'cached' });
+});
+
+test('record-start unknown outcome quarantines its tab once', async () => {
+  process.env.KV_BRIDGE_TEST = '1';
+  const { testUnknownOutcomeQuarantineCount } = await import('../dist/bridge.js');
+  assert.equal(await testUnknownOutcomeQuarantineCount(), 1);
+});
+
 test('Bridge coordination serializes same-tab writes across sessions', async () => {
   const value = coordinator();
   const order = [];

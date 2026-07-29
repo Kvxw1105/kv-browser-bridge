@@ -72,6 +72,7 @@ class ChromeBridge {
   private readonly pipeName = makePipeName();
   private readonly discoveryPath = makeDiscoveryPath();
   private readonly pending = new Map<string, PendingRequest>();
+  private nativeRequestSequence = 0;
   private readonly idempotencyInFlight = new Map<string, Promise<unknown>>();
   private readonly idempotencyCompleted = new Map<string, { expiresAt: number; result?: unknown; error?: BridgeError }>();
   private readonly clients = new Set<Socket>();
@@ -326,6 +327,20 @@ class ChromeBridge {
     const clientIdentity = socket.kvIdentity?.clientId ?? authenticatedSessionId;
     const action = browserActionFromTool(request.method);
     const sessionId = socket.kvSessionId ?? authenticatedSessionId;
+    const cacheKey = `${clientIdentity}:${request.idempotencyKey ?? request.id}`;
+    if (this.idempotencyCompleted.size > 1024) {
+      const now = Date.now();
+      for (const [key, value] of this.idempotencyCompleted) {
+        if (value.expiresAt <= now || this.idempotencyCompleted.size > 1024) this.idempotencyCompleted.delete(key);
+      }
+    }
+    const cached = this.idempotencyCompleted.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      this.writePipe(socket, cached.error
+        ? { type: 'response', id: request.id, ok: false, error: cached.error }
+        : { type: 'response', id: request.id, ok: true, result: cached.result });
+      return;
+    }
     const originalParams = { ...(request.params ?? {}) };
     let params: Record<string, unknown>;
     try {
@@ -348,20 +363,6 @@ class ChromeBridge {
       operationClassFor(action),
       typeof params.tabId === 'number' ? params.tabId : undefined,
     ));
-    const cacheKey = `${clientIdentity}:${request.idempotencyKey ?? request.id}`;
-    if (this.idempotencyCompleted.size > 1024) {
-      const now = Date.now();
-      for (const [key, value] of this.idempotencyCompleted) {
-        if (value.expiresAt <= now || this.idempotencyCompleted.size > 1024) this.idempotencyCompleted.delete(key);
-      }
-    }
-    const cached = this.idempotencyCompleted.get(cacheKey);
-    if (cached && cached.expiresAt > Date.now()) {
-      this.writePipe(socket, cached.error
-        ? { type: 'response', id: request.id, ok: false, error: cached.error }
-        : { type: 'response', id: request.id, ok: true, result: cached.result });
-      return;
-    }
     try {
       let execution = this.idempotencyInFlight.get(cacheKey);
       if (!execution) {
@@ -383,7 +384,7 @@ class ChromeBridge {
       this.idempotencyCompleted.set(cacheKey, { expiresAt: Date.now() + 30_000, error: bridgeError });
       this.runtimeSafe(() => this.runtime?.recordResult(eventId, undefined, bridgeError));
       if (action === 'record_start') this.releaseRecordingLeases(sessionId, params.tabId, bridgeError.code === 'UNKNOWN_OUTCOME');
-      if (bridgeError.code === 'UNKNOWN_OUTCOME' && typeof params.tabId === 'number') this.quarantineTab(sessionId, params.tabId);
+      if (bridgeError.code === 'UNKNOWN_OUTCOME' && action !== 'record_start' && action !== 'record_stop' && typeof params.tabId === 'number') this.quarantineTab(sessionId, params.tabId);
       if (action === 'record_stop') this.releaseRecordingLeases(sessionId, params.tabId, bridgeError.code === 'UNKNOWN_OUTCOME');
       this.writePipe(socket, { type: 'response', id: request.id, ok: false, error: bridgeError } satisfies PipeResponse);
     } finally {
@@ -476,21 +477,22 @@ class ChromeBridge {
     const remainingMs = Math.max(0, deadlineAt - Date.now());
     // The authenticated bridge is the trust boundary for retry semantics.
     const operationClass = operationClassFor(action);
-    const request: BrowserRequest = { type: 'browser:request', requestId, sessionId, action, params, timeoutMs, deadlineAt, operationClass };
+    const nativeRequestId = `${this.instanceId}:${++this.nativeRequestSequence}`;
+    const request: BrowserRequest = { type: 'browser:request', requestId: nativeRequestId, sessionId, action, params, timeoutMs, deadlineAt, operationClass };
     return new Promise<unknown>((resolve, reject) => {
       const timer = setTimeout(() => {
-        if (!this.pending.delete(requestId)) return;
+        if (!this.pending.delete(nativeRequestId)) return;
         const timeout = this.error(operationClass === 'non_idempotent_write' ? 'UNKNOWN_OUTCOME' : 'REQUEST_TIMEOUT', `Browser action ${action} exceeded ${timeoutMs}ms`, operationClass === 'read', { action, timeoutMs, deadlineAt, operationClass });
         this.recordError(timeout);
         reject(timeout);
       }, remainingMs);
-      this.pending.set(requestId, { resolve, reject, timer, method: `browser_${action}`, startedAt: Date.now(), operationClass });
+      this.pending.set(nativeRequestId, { resolve, reject, timer, method: `browser_${action}`, startedAt: Date.now(), operationClass });
       try {
         this.sendNative(request);
-        this.logger.write('info', 'browser.request', { requestId, method: `browser_${action}`, timeoutMs });
+        this.logger.write('info', 'browser.request', { requestId: nativeRequestId, method: `browser_${action}`, timeoutMs });
       } catch (error) {
         clearTimeout(timer);
-        this.pending.delete(requestId);
+        this.pending.delete(nativeRequestId);
         reject(this.error('CONNECTION_CLOSED', error instanceof Error ? error.message : String(error), true));
       }
     });
@@ -748,6 +750,75 @@ export async function testActualNativeDisconnect(operationClass: BrowserRequest[
   (bridge as any).broadcastStatus = () => undefined;
   (bridge as any).handleNativeError(new Error('fake native disconnect'));
   return rejected;
+}
+
+/** Test seam: verifies that native request IDs are unique across pipe sessions. */
+export async function testNativeRequestRouting(): Promise<{ requestIds: string[]; results: unknown[] }> {
+  const bridge = Object.create(ChromeBridge.prototype) as ChromeBridge;
+  const messages: BrowserRequest[] = [];
+  (bridge as any).instanceId = 'test-bridge';
+  (bridge as any).nativeRequestSequence = 0;
+  (bridge as any).pending = new Map();
+  (bridge as any).extensionConnected = true;
+  (bridge as any).logger = { write: () => undefined };
+  (bridge as any).broadcastStatus = () => undefined;
+  (bridge as any).sendNative = (message: BrowserRequest) => messages.push(message);
+  const first = (bridge as any).forwardBrowserRequest('same-id', 'session-a', 'click', {}, 1_000);
+  const second = (bridge as any).forwardBrowserRequest('same-id', 'session-b', 'click', {}, 1_000);
+  (bridge as any).handleNativeMessage({ type: 'browser:response', requestId: messages[0].requestId, result: 'first' });
+  (bridge as any).handleNativeMessage({ type: 'browser:response', requestId: messages[1].requestId, result: 'second' });
+  return { requestIds: messages.map((message) => message.requestId), results: await Promise.all([first, second]) };
+}
+
+/** Test seam: confirms a completed idempotency hit does not acquire recording leases. */
+export async function testIdempotencyCacheSkipsRecordingLease(): Promise<{ acquireCount: number; response: unknown }> {
+  const bridge = Object.create(ChromeBridge.prototype) as ChromeBridge;
+  let acquireCount = 0;
+  let response: unknown;
+  (bridge as any).coordinator = {
+    touch: () => undefined,
+    resolveTab: () => 7,
+    acquire: () => { acquireCount += 1; throw new Error('lease acquisition should be skipped'); },
+  };
+  (bridge as any).coordinationMode = 'enforce';
+  (bridge as any).idempotencyCompleted = new Map([['client-a:request-1', { expiresAt: Date.now() + 30_000, result: 'cached' }]]);
+  (bridge as any).idempotencyInFlight = new Map();
+  (bridge as any).recordingLeases = new Map();
+  (bridge as any).runtime = undefined;
+  (bridge as any).writePipe = (_socket: unknown, value: unknown) => { response = value; };
+  await (bridge as any).handlePipeRequest(
+    { kvIdentity: { clientId: 'client-a' }, kvSessionId: 'session-a' },
+    { id: 'request-1', method: 'browser_record_start', params: { tabId: 7 } },
+    'session-a',
+  );
+  return { acquireCount, response };
+}
+
+/** Test seam: confirms UNKNOWN_OUTCOME quarantines a recording tab only once. */
+export async function testUnknownOutcomeQuarantineCount(): Promise<number> {
+  const bridge = Object.create(ChromeBridge.prototype) as ChromeBridge;
+  let quarantineCount = 0;
+  (bridge as any).coordinator = {
+    touch: () => undefined,
+    resolveTab: (_sessionId: string, tabId?: number) => tabId,
+    acquire: (_sessionId: string, resource: string) => ({ id: resource === 'global:recorder' ? 'recorder' : 'tab' }),
+    release: () => undefined,
+    quarantineTab: () => { quarantineCount += 1; },
+  };
+  (bridge as any).coordinationMode = 'enforce';
+  (bridge as any).broadcastCoordinationStatus = () => undefined;
+  (bridge as any).idempotencyCompleted = new Map();
+  (bridge as any).idempotencyInFlight = new Map();
+  (bridge as any).recordingLeases = new Map();
+  (bridge as any).runtime = undefined;
+  (bridge as any).coordinateBrowserRequest = () => Promise.reject({ code: 'UNKNOWN_OUTCOME', message: 'ambiguous', retryable: false });
+  (bridge as any).writePipe = () => undefined;
+  await (bridge as any).handlePipeRequest(
+    { kvIdentity: { clientId: 'client-a' }, kvSessionId: 'session-a' },
+    { id: 'request-1', method: 'browser_record_start', params: { tabId: 7 } },
+    'session-a',
+  );
+  return quarantineCount;
 }
 
 if (process.env.KV_BRIDGE_TEST !== '1') new ChromeBridge().start();
