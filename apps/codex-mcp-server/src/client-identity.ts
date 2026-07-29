@@ -28,7 +28,7 @@ export function normalizeClientName(raw: string | undefined, fallback = 'Codex')
   const source = raw === undefined ? fallback : raw;
   if (typeof source !== 'string' || source.trim().length === 0) throw new Error('KBB_CLIENT_NAME must not be empty.');
   const normalized = source.trim().replace(/[\u0000-\u001f\u007f]/g, ' ');
-  if (normalized.length === 0) throw new Error('KBB_CLIENT_NAME must not be empty.');
+  if (normalized.trim().length === 0) throw new Error('KBB_CLIENT_NAME must not be empty.');
   if (normalized.length > MAX_IDENTIFIER_LENGTH) throw new Error(`KBB_CLIENT_NAME must be at most ${MAX_IDENTIFIER_LENGTH} characters.`);
   return normalized;
 }

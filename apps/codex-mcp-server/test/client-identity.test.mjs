@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createClientIdentity, normalizeClientIdentifier } from '../dist/client-identity.js';
+import { createClientIdentity, normalizeClientIdentifier, normalizeClientName } from '../dist/client-identity.js';
 
 test('uses stable defaults and a per-process UUID instance', () => {
   const identity = createClientIdentity({});
@@ -17,6 +17,11 @@ test('normalizes identifier punctuation and whitespace without leaking paths', (
 test('rejects empty and oversized fallback identifiers', () => {
   assert.throws(() => normalizeClientIdentifier('   ', 'fallback'), /must not be empty/);
   assert.throws(() => normalizeClientIdentifier('x'.repeat(101), 'fallback'), /at most 100/);
+});
+
+test('rejects names that normalize to whitespace', () => {
+  assert.throws(() => normalizeClientName('\u007f'), /must not be empty/);
+  assert.throws(() => normalizeClientName('\u0000\u001f\u007f'), /must not be empty/);
 });
 
 test('honors explicit identity environment values', () => {
