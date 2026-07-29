@@ -18,6 +18,32 @@ type CoordinationStatus = {
 
 let latestCoordinationStatus: CoordinationStatus | null = null;
 
+function sanitizeCoordinationStatus(value: unknown): CoordinationStatus | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const input = value as Record<string, unknown>;
+  const mode = input.mode;
+  if (mode !== 'off' && mode !== 'observe' && mode !== 'enforce') return null;
+  const clients = Array.isArray(input.clients) ? input.clients.flatMap((entry) => {
+    if (typeof entry !== 'object' || entry === null) return [];
+    const client = entry as Record<string, unknown>;
+    if (typeof client.clientId !== 'string' || typeof client.clientName !== 'string') return [];
+    const defaultTabId = client.defaultTabId;
+    return [{
+      clientId: client.clientId,
+      clientName: client.clientName,
+      ...(typeof defaultTabId === 'number' && Number.isFinite(defaultTabId) ? { defaultTabId } : {}),
+    }];
+  }) : [];
+  const leases = Array.isArray(input.leases) ? input.leases.flatMap((entry) => {
+    if (typeof entry !== 'object' || entry === null) return [];
+    const lease = entry as Record<string, unknown>;
+    if (typeof lease.resource !== 'string' || typeof lease.purpose !== 'string' || typeof lease.expiresAt !== 'string') return [];
+    if (lease.state !== 'active' && lease.state !== 'quarantined') return [];
+    return [{ resource: lease.resource, purpose: lease.purpose, state: lease.state, expiresAt: lease.expiresAt }];
+  }) : [];
+  return { mode, clients, leases };
+}
+
 function log(event: string, details: Record<string, unknown> = {}): void {
   console.info('[kv-browser-bridge-extension]', JSON.stringify({ event, at: new Date().toISOString(), ...details }));
 }
@@ -93,7 +119,7 @@ function connectBridge(): void {
     log('bridge_connected');
     broadcastToPanels({ type: '_native_status', connected: true });
 
-    port.onMessage.addListener((message: { type?: string; requestId?: string; action?: string; params?: Record<string, unknown>; sessionId?: string; deadlineAt?: number; operationClass?: 'read' | 'non_idempotent_write'; domain?: string; paths?: string[]; status?: CoordinationStatus }) => {
+    port.onMessage.addListener((message: { type?: string; requestId?: string; action?: string; params?: Record<string, unknown>; sessionId?: string; deadlineAt?: number; operationClass?: 'read' | 'non_idempotent_write'; domain?: string; paths?: string[]; status?: unknown }) => {
       if (message.type === 'browser:request' && typeof message.requestId === 'string' && typeof message.action === 'string') {
         void handleBrowserRequest({ requestId: message.requestId, action: message.action, params: message.params, sessionId: message.sessionId, deadlineAt: message.deadlineAt, operationClass: message.operationClass }, connectionStatus)
           .then(postBrowserResponse)
@@ -107,8 +133,12 @@ function connectBridge(): void {
       if (message.type === 'sources:set' && message.domain && message.paths) {
         chrome.storage.local.set({ [`ccb-sources-${message.domain}`]: message.paths });
       }
-      if (message.type === 'bridge:coordination_status' && message.status) {
-        latestCoordinationStatus = message.status;
+      if (message.type === 'bridge:coordination_status') {
+        const status = sanitizeCoordinationStatus(message.status);
+        if (!status) return;
+        latestCoordinationStatus = status;
+        broadcastToPanels({ ...message, status });
+        return;
       }
       broadcastToPanels(message);
     });
@@ -121,7 +151,6 @@ function connectBridge(): void {
       heartbeatTimer = null;
       log('bridge_disconnected', { error });
       broadcastToPanels({ type: '_native_status', connected: false, error });
-      broadcastToPanels({ type: 'bridge:coordination_status', status: null });
       scheduleReconnect();
     });
     heartbeatTimer = setInterval(() => {

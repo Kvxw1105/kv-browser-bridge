@@ -1736,7 +1736,7 @@ body {
 .local-bridge-panel__agent, .local-bridge-panel__lease { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 7px; min-width: 0; padding: 8px 9px; border: 1px solid var(--line); border-radius: 6px; background: rgba(255,255,255,.03); }
 .local-bridge-panel__agent i { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px rgba(216,255,69,.12); }
 .local-bridge-panel__agent strong, .local-bridge-panel__lease strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
-.local-bridge-panel__agent span, .local-bridge-panel__lease span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font: 10px "SF Mono", "Cascadia Code", monospace; }
+.local-bridge-panel__agent span, .local-bridge-panel__lease span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font: 10px "SF Mono", "Cascadia Code", monospace; }
 .local-bridge-panel__lease { grid-template-columns: minmax(0, 1fr) auto; }
 .local-bridge-panel__lease span { grid-column: 1 / 2; }
 .local-bridge-panel__lease em { grid-column: 2; grid-row: 1 / span 2; align-self: center; color: var(--accent); font-size: 10px; font-style: normal; }

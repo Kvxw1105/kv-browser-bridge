@@ -79,6 +79,7 @@ export function LocalBridgePanel() {
       if (message.type === '_native_status') {
         setState(message.connected ? 'connected' : 'disconnected');
         setNativeError(message.connected ? '' : message.error ?? '');
+        if (!message.connected) setCoordination(null);
       }
       if (message.type === 'bridge:coordination_status') setCoordination(message.status ?? null);
     });
@@ -88,6 +89,8 @@ export function LocalBridgePanel() {
 
   const label = state === 'connected' ? text.connected : state === 'connecting' ? text.connecting : text.disconnected;
   const connected = state === 'connected';
+  const coordinationClients = coordination?.clients ?? [];
+  const coordinationLeases = coordination?.leases ?? [];
   const requestPermission = async (permission: string) => {
     const granted = await chrome.permissions.request({ permissions: [permission] });
     if (granted) setGrantedPermissions((current) => [...new Set([...current, permission])]);
@@ -216,11 +219,11 @@ export function LocalBridgePanel() {
       <section className="local-bridge-panel__coordination" aria-labelledby="coordination-heading">
         <div className="local-bridge-panel__coordination-header">
           <div><p id="coordination-heading">{text.agents}</p><span>{text.mode}: {coordination?.mode ?? '—'}</span></div>
-          <span className="local-bridge-panel__coordination-count">{coordination?.clients.length ?? 0}</span>
+          <span className="local-bridge-panel__coordination-count">{coordinationClients.length}</span>
         </div>
         <div className="local-bridge-panel__coordination-grid">
           <div className="local-bridge-panel__agent-list">
-            {coordination?.clients.length ? coordination.clients.map((client) => (
+            {coordinationClients.length ? coordinationClients.map((client) => (
               <div className="local-bridge-panel__agent" key={`${client.clientId}-${client.defaultTabId ?? 'none'}`}>
                 <i aria-hidden="true" />
                 <strong>{client.clientName}</strong>
@@ -229,7 +232,7 @@ export function LocalBridgePanel() {
             )) : <span className="local-bridge-panel__coordination-empty">{text.noAgents}</span>}
           </div>
           <div className="local-bridge-panel__lease-list">
-            {coordination?.leases.length ? coordination.leases.map((lease) => (
+            {coordinationLeases.length ? coordinationLeases.map((lease) => (
               <div className={`local-bridge-panel__lease local-bridge-panel__lease--${lease.state}`} key={`${lease.resource}-${lease.expiresAt}`}>
                 <strong>{lease.resource}</strong><span>{lease.purpose}</span><em>{lease.state}</em>
               </div>
