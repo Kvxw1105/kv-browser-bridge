@@ -1723,3 +1723,23 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: #4a4a6a;
 }
+
+/* Live coordination view is intentionally observation-only: no lease controls
+ * or history are exposed in the extension surface. */
+.local-bridge-panel__coordination { max-width: 1120px; margin: 12px auto 0; padding: 14px 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--ink); }
+.local-bridge-panel__coordination-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.local-bridge-panel__coordination-header p { margin: 0; color: var(--accent); font: 10px "SF Mono", "Cascadia Code", monospace; text-transform: uppercase; }
+.local-bridge-panel__coordination-header span { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; }
+.local-bridge-panel__coordination-count { display: grid !important; place-items: center; width: 28px; height: 28px; margin: 0 !important; border: 1px solid var(--line); border-radius: 50%; color: var(--accent) !important; font: 700 12px "SF Mono", "Cascadia Code", monospace !important; }
+.local-bridge-panel__coordination-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; padding-top: 11px; }
+.local-bridge-panel__agent-list, .local-bridge-panel__lease-list { display: grid; gap: 7px; min-width: 0; }
+.local-bridge-panel__agent, .local-bridge-panel__lease { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 7px; min-width: 0; padding: 8px 9px; border: 1px solid var(--line); border-radius: 6px; background: rgba(255,255,255,.03); }
+.local-bridge-panel__agent i { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px rgba(216,255,69,.12); }
+.local-bridge-panel__agent strong, .local-bridge-panel__lease strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.local-bridge-panel__agent span, .local-bridge-panel__lease span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font: 10px "SF Mono", "Cascadia Code", monospace; }
+.local-bridge-panel__lease { grid-template-columns: minmax(0, 1fr) auto; }
+.local-bridge-panel__lease span { grid-column: 1 / 2; }
+.local-bridge-panel__lease em { grid-column: 2; grid-row: 1 / span 2; align-self: center; color: var(--accent); font-size: 10px; font-style: normal; }
+.local-bridge-panel__lease--quarantined em { color: #ff7373; }
+.local-bridge-panel__coordination-empty { padding: 9px 0; color: var(--muted); font-size: 11px; }
+@media (max-width: 520px) { .local-bridge-panel__coordination-grid { grid-template-columns: 1fr; gap: 10px; } .local-bridge-panel__coordination { padding: 12px; } }

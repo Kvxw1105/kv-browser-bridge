@@ -5,6 +5,11 @@ type BridgeState = 'connecting' | 'connected' | 'disconnected';
 type BrowserTab = { id: number; title: string; url: string; active: boolean; favicon: string };
 type RecordingState = { active: boolean; id?: string; tabId?: number; intent?: string; events?: number };
 type WorkflowSummary = { id: string; steps: unknown[]; checkpoints: unknown[] };
+type CoordinationStatus = {
+  mode: 'off' | 'observe' | 'enforce';
+  clients: Array<{ clientId: string; clientName: string; defaultTabId?: number }>;
+  leases: Array<{ resource: string; purpose: string; state: 'active' | 'quarantined'; expiresAt: string }>;
+};
 type Locale = 'zh' | 'en';
 type Theme = 'light' | 'dark';
 
@@ -23,11 +28,12 @@ export function LocalBridgePanel() {
   const [updatedAt, setUpdatedAt] = useState('');
   const [locale, setLocale] = useState<Locale>('zh');
   const [theme, setTheme] = useState<Theme>('dark');
+  const [coordination, setCoordination] = useState<CoordinationStatus | null>(null);
   const chinese = locale === 'zh';
   const text = chinese ? {
-    eyebrow: '本地浏览器控制', connected: '已连接', connecting: '正在连接', disconnected: '未连接', ready: '浏览器已就绪', connectingTitle: '正在连接 Chrome', unavailable: '桥接不可用', readyBody: '当前 Chrome 登录态已可供使用。', unavailableBody: '请保持 Chrome 打开并启用扩展。', target: '当前目标', noTarget: '未选择标签页', refresh: '刷新', openPage: '打开一个页面后再打开 Kv Bridge。', noUrl: '没有可用的页面 URL', updated: '已更新', waiting: '等待页面详情', pick: '选择元素', copy: '复制标签页 ID', access: '浏览器访问', enabled: '已启用', bookmarks: '书签', bookmarksDesc: '打开已保存的目的地', downloads: '下载', downloadsDesc: '读取最近下载状态', extensions: '扩展程序', extensionsDesc: '检查已安装扩展', enable: '启用', tabs: '打开的标签页', tabsHint: '选择 Agent 工具的默认目标页。', refreshList: '刷新列表', targetTag: '目标', active: '当前', noTabs: '当前窗口没有可浏览的标签页。', recorder: '任务录制', recording: '已在标签页', events: '记录事件', recorderHint: '记录浏览器动作、目标、人工检查点和备注；当前不是视频录屏。', intentPlaceholder: '这条流程要完成什么？', start: '开始录制', stop: '停止并生成草稿', saved: '已生成草稿', steps: '个步骤', checkpoints: '个检查点', native: '本地消息', error: '录制请求失败。', dark: '深色模式', light: '浅色模式'
+    eyebrow: '本地浏览器控制', connected: '已连接', connecting: '正在连接', disconnected: '未连接', ready: '浏览器已就绪', connectingTitle: '正在连接 Chrome', unavailable: '桥接不可用', readyBody: '当前 Chrome 登录态已可供使用。', unavailableBody: '请保持 Chrome 打开并启用扩展。', target: '当前目标', noTarget: '未选择标签页', refresh: '刷新', openPage: '打开一个页面后再打开 Kv Bridge。', noUrl: '没有可用的页面 URL', updated: '已更新', waiting: '等待页面详情', pick: '选择元素', copy: '复制标签页 ID', access: '浏览器访问', enabled: '已启用', bookmarks: '书签', bookmarksDesc: '打开已保存的目的地', downloads: '下载', downloadsDesc: '读取最近下载状态', extensions: '扩展程序', extensionsDesc: '检查已安装扩展', enable: '启用', tabs: '打开的标签页', tabsHint: '选择 Agent 工具的默认目标页。', refreshList: '刷新列表', targetTag: '目标', active: '当前', noTabs: '当前窗口没有可浏览的标签页。', recorder: '任务录制', recording: '已在标签页', events: '记录事件', recorderHint: '记录浏览器动作、目标、人工检查点和备注；当前不是视频录屏。', intentPlaceholder: '这条流程要完成什么？', start: '开始录制', stop: '停止并生成草稿', saved: '已生成草稿', steps: '个步骤', checkpoints: '个检查点', native: '本地消息', error: '录制请求失败。', dark: '深色模式', light: '浅色模式', agents: '连接中的 Agent', mode: '协调模式', leases: '资源占用', noAgents: '暂无其他 Agent 连接', noLeases: '暂无标签页占用'
   } : {
-    eyebrow: 'LOCAL BROWSER CONTROL', connected: 'Connected', connecting: 'Connecting', disconnected: 'Disconnected', ready: 'Browser ready', connectingTitle: 'Connecting to Chrome', unavailable: 'Bridge unavailable', readyBody: 'Your existing Chrome session is available.', unavailableBody: 'Keep Chrome open and the extension enabled.', target: 'Current target', noTarget: 'No tab selected', refresh: 'Refresh', openPage: 'Open a page, then open Kv Bridge.', noUrl: 'No page URL available', updated: 'Updated', waiting: 'Waiting for page details', pick: 'Pick element', copy: 'Copy tab ID', access: 'Browser access', enabled: 'enabled', bookmarks: 'Bookmarks', bookmarksDesc: 'Open saved destinations', downloads: 'Downloads', downloadsDesc: 'Read recent download status', extensions: 'Extensions', extensionsDesc: 'Inspect installed extensions', enable: 'Enable', tabs: 'Open tabs', tabsHint: 'Select the default target for Agent tools.', refreshList: 'Refresh list', targetTag: 'Target', active: 'Active', noTabs: 'No browsable tabs found in this window.', recorder: 'Task recorder', recording: 'captured events on tab', events: '', recorderHint: 'Records browser actions, targets, checkpoints, and notes. It does not record screen video.', intentPlaceholder: 'What should this workflow accomplish?', start: 'Start recording', stop: 'Stop and create draft', saved: 'Draft created', steps: 'steps', checkpoints: 'checkpoints', native: 'Native Messaging', error: 'Recording request failed.', dark: 'Dark mode', light: 'Light mode'
+    eyebrow: 'LOCAL BROWSER CONTROL', connected: 'Connected', connecting: 'Connecting', disconnected: 'Disconnected', ready: 'Browser ready', connectingTitle: 'Connecting to Chrome', unavailable: 'Bridge unavailable', readyBody: 'Your existing Chrome session is available.', unavailableBody: 'Keep Chrome open and the extension enabled.', target: 'Current target', noUrl: 'No page URL available', noTarget: 'No tab selected', refresh: 'Refresh', openPage: 'Open a page, then open Kv Bridge.', updated: 'Updated', waiting: 'Waiting for page details', pick: 'Pick element', copy: 'Copy tab ID', access: 'Browser access', enabled: 'enabled', bookmarks: 'Bookmarks', bookmarksDesc: 'Open saved destinations', downloads: 'Downloads', downloadsDesc: 'Read recent download status', extensions: 'Extensions', extensionsDesc: 'Inspect installed extensions', enable: 'Enable', tabs: 'Open tabs', tabsHint: 'Select the default target for Agent tools.', refreshList: 'Refresh list', targetTag: 'Target', active: 'Active', noTabs: 'No browsable tabs found in this window.', recorder: 'Task recorder', recording: 'captured events on tab', events: '', recorderHint: 'Records browser actions, targets, checkpoints, and notes. It does not record screen video.', intentPlaceholder: 'What should this workflow accomplish?', start: 'Start recording', stop: 'Stop and create draft', saved: 'Draft created', steps: 'steps', checkpoints: 'checkpoints', native: 'Native Messaging', error: 'Recording request failed.', dark: 'Dark mode', light: 'Light mode', agents: 'Connected agents', mode: 'Coordination mode', leases: 'Resource leases', noAgents: 'No other agents connected', noLeases: 'No active leases'
   };
 
   const refreshTarget = () => {
@@ -69,11 +75,12 @@ export function LocalBridgePanel() {
     const port = chrome.runtime.connect({ name: 'sidepanel' });
     void chrome.permissions.getAll().then((permissions) => setGrantedPermissions(permissions.permissions ?? []));
     if (MY_TAB_ID != null) port.postMessage({ type: '_panel_init', tabId: MY_TAB_ID });
-    port.onMessage.addListener((message: { type?: string; connected?: boolean; error?: string }) => {
+    port.onMessage.addListener((message: { type?: string; connected?: boolean; error?: string; status?: CoordinationStatus | null }) => {
       if (message.type === '_native_status') {
         setState(message.connected ? 'connected' : 'disconnected');
         setNativeError(message.connected ? '' : message.error ?? '');
       }
+      if (message.type === 'bridge:coordination_status') setCoordination(message.status ?? null);
     });
     port.onDisconnect.addListener(() => setState('disconnected'));
     return () => port.disconnect();
@@ -203,6 +210,31 @@ export function LocalBridgePanel() {
             </button>
           ))}
           {tabs.length === 0 && <p className="local-bridge-panel__tabs-empty">{text.noTabs}</p>}
+        </div>
+      </section>
+
+      <section className="local-bridge-panel__coordination" aria-labelledby="coordination-heading">
+        <div className="local-bridge-panel__coordination-header">
+          <div><p id="coordination-heading">{text.agents}</p><span>{text.mode}: {coordination?.mode ?? '—'}</span></div>
+          <span className="local-bridge-panel__coordination-count">{coordination?.clients.length ?? 0}</span>
+        </div>
+        <div className="local-bridge-panel__coordination-grid">
+          <div className="local-bridge-panel__agent-list">
+            {coordination?.clients.length ? coordination.clients.map((client) => (
+              <div className="local-bridge-panel__agent" key={`${client.clientId}-${client.defaultTabId ?? 'none'}`}>
+                <i aria-hidden="true" />
+                <strong>{client.clientName}</strong>
+                <span>{client.clientId}{client.defaultTabId == null ? '' : ` · Tab ${client.defaultTabId}`}</span>
+              </div>
+            )) : <span className="local-bridge-panel__coordination-empty">{text.noAgents}</span>}
+          </div>
+          <div className="local-bridge-panel__lease-list">
+            {coordination?.leases.length ? coordination.leases.map((lease) => (
+              <div className={`local-bridge-panel__lease local-bridge-panel__lease--${lease.state}`} key={`${lease.resource}-${lease.expiresAt}`}>
+                <strong>{lease.resource}</strong><span>{lease.purpose}</span><em>{lease.state}</em>
+              </div>
+            )) : <span className="local-bridge-panel__coordination-empty">{text.noLeases}</span>}
+          </div>
         </div>
       </section>
 

@@ -10,6 +10,14 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 const panelPorts = new Set<chrome.runtime.Port>();
 
+type CoordinationStatus = {
+  mode: 'off' | 'observe' | 'enforce';
+  clients: Array<{ clientId: string; clientName: string; defaultTabId?: number }>;
+  leases: Array<{ resource: string; purpose: string; state: 'active' | 'quarantined'; expiresAt: string }>;
+};
+
+let latestCoordinationStatus: CoordinationStatus | null = null;
+
 function log(event: string, details: Record<string, unknown> = {}): void {
   console.info('[kv-browser-bridge-extension]', JSON.stringify({ event, at: new Date().toISOString(), ...details }));
 }
@@ -85,7 +93,7 @@ function connectBridge(): void {
     log('bridge_connected');
     broadcastToPanels({ type: '_native_status', connected: true });
 
-    port.onMessage.addListener((message: { type?: string; requestId?: string; action?: string; params?: Record<string, unknown>; sessionId?: string; deadlineAt?: number; operationClass?: 'read' | 'non_idempotent_write'; domain?: string; paths?: string[] }) => {
+    port.onMessage.addListener((message: { type?: string; requestId?: string; action?: string; params?: Record<string, unknown>; sessionId?: string; deadlineAt?: number; operationClass?: 'read' | 'non_idempotent_write'; domain?: string; paths?: string[]; status?: CoordinationStatus }) => {
       if (message.type === 'browser:request' && typeof message.requestId === 'string' && typeof message.action === 'string') {
         void handleBrowserRequest({ requestId: message.requestId, action: message.action, params: message.params, sessionId: message.sessionId, deadlineAt: message.deadlineAt, operationClass: message.operationClass }, connectionStatus)
           .then(postBrowserResponse)
@@ -99,16 +107,21 @@ function connectBridge(): void {
       if (message.type === 'sources:set' && message.domain && message.paths) {
         chrome.storage.local.set({ [`ccb-sources-${message.domain}`]: message.paths });
       }
+      if (message.type === 'bridge:coordination_status' && message.status) {
+        latestCoordinationStatus = message.status;
+      }
       broadcastToPanels(message);
     });
     port.onDisconnect.addListener(() => {
       if (nativePort !== port) return;
       const error = chrome.runtime.lastError?.message ?? 'Chrome Bridge disconnected';
       nativePort = null;
+      latestCoordinationStatus = null;
       if (heartbeatTimer) clearInterval(heartbeatTimer);
       heartbeatTimer = null;
       log('bridge_disconnected', { error });
       broadcastToPanels({ type: '_native_status', connected: false, error });
+      broadcastToPanels({ type: 'bridge:coordination_status', status: null });
       scheduleReconnect();
     });
     heartbeatTimer = setInterval(() => {
@@ -141,6 +154,9 @@ chrome.runtime.onConnect.addListener((port) => {
       // requests should always select explicitly through browser_switch_tab.
       setSelectedTab(message.tabId);
       try { port.postMessage({ type: '_native_status', connected: nativePort != null }); } catch { /* closed */ }
+      if (latestCoordinationStatus) {
+        try { port.postMessage({ type: 'bridge:coordination_status', status: latestCoordinationStatus }); } catch { /* closed */ }
+      }
       return;
     }
     try { postNative(message); } catch (error) {
