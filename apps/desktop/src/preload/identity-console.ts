@@ -23,6 +23,7 @@ const identityConsole = {
   validateAll(): Promise<IdentityConsoleApiResult<unknown[]>> { return ipcRenderer.invoke('identity:validateAll'); },
   stopAll(): Promise<IdentityConsoleApiResult<IdentityConsoleOperationResult[]>> { return ipcRenderer.invoke('identity:stopAll'); },
   logs(): Promise<IdentityConsoleApiResult<IdentityConsoleLog[]>> { return ipcRenderer.invoke('identity:logs'); },
+  discover(): Promise<IdentityConsoleApiResult<unknown>> { return ipcRenderer.invoke('identity:discover'); },
 };
 
 export type IdentityConsoleBridge = typeof identityConsole;
