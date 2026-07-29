@@ -116,7 +116,7 @@ function createWindow(): void {
     width: 1680,
     height: 1040,
     backgroundColor: '#faf7f2',
-    title: 'Claude Code Browser',
+    title: 'KV Browser Bridge',
     // Custom frameless chrome: hide the native title bar, render our own
     // breadcrumb titlebar below. Traffic lights are inset to align with it.
     titleBarStyle: isMac ? 'hiddenInset' : 'hidden',
