@@ -155,6 +155,10 @@ button { font: inherit; color: inherit; }
   display: flex; align-items: center; gap: 0;
   -webkit-app-region: no-drag;
 }
+.titlebar__window-controls { display: flex; align-self: stretch; margin-left: 10px; }
+.titlebar__window-button { all: unset; -webkit-app-region: no-drag; width: 46px; display: flex; align-items: center; justify-content: center; color: var(--ink-2); cursor: pointer; }
+.titlebar__window-button:hover { background: var(--bg-elev); color: var(--ink); }
+.titlebar__window-button--close:hover { background: #c42b1c; color: #fff; }
 .titlebar__toggle {
   all: unset; cursor: pointer;
   width: 24px; height: 24px;
