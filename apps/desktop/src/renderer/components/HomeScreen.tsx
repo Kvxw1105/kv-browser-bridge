@@ -35,7 +35,7 @@ export function HomeScreen() {
   return (
     <div className="home">
       <div className="home__stage">
-        {view === 'list' && <KvDashboard openConsole={() => go('identity-console')} openFolder={() => void openFolder()} newProject={() => { setEditing(undefined); go('identity-form'); }} />}
+        {view === 'list' && <KvDashboard openConsole={() => go('identity-console')} openFolder={() => void openFolder()} openNewIdentity={() => { setEditing(undefined); go('identity-form'); }} openEditIdentity={(manifest) => { setEditing(manifest as IdentityManifest); go('identity-form'); }} />}
         {false && view === 'list' && (
           <div className="home__column">
               <div className="home__label">CLAUDE-CODE-BROWSER</div>
