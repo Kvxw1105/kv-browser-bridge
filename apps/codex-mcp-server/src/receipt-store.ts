@@ -54,7 +54,18 @@ function summarizeResult(result: unknown): unknown {
   if (typeof result !== 'object' || result === null) return undefined;
   const source = result as Record<string, unknown>;
   const safe: Record<string, unknown> = {};
-  for (const key of ['action', 'windowHandle', 'foregroundWindowHandle', 'targetRef', 'valueSet']) {
+  for (const key of [
+    'action',
+    'windowHandle',
+    'foregroundWindowHandle',
+    'targetRef',
+    'valueSet',
+    'appId',
+    'displayName',
+    'pid',
+    'executableName',
+    'source',
+  ]) {
     const value = source[key];
     if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') safe[key] = value;
   }

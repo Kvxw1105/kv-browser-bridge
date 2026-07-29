@@ -35,6 +35,8 @@ export function summarizeComputerStatus(
   for (const check of required.filter((item) => !item.ok)) nextActions.push(`Fix ${check.name}: ${check.message}`);
   const chrome = optional.find((item) => item.name === 'chrome-bridge');
   if (chrome && !chrome.ok) nextActions.push('Load the Chrome extension and confirm the Native Messaging host is installed.');
+  const nativeApps = optional.find((item) => item.name === 'native-app-launcher');
+  if (nativeApps && !nativeApps.ok) nextActions.push(`Fix native-app-launcher: ${nativeApps.message}`);
 
   const state = !doctor.ok
     ? 'unavailable'

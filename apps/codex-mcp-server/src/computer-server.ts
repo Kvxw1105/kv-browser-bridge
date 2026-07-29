@@ -3,7 +3,9 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod/v4';
 import { BridgeClient } from './bridge-client.js';
+import { NATIVE_APP_ID_PATTERN } from './computer-contracts.js';
 import { BrowserComputerRuntime } from './computer-runtime.js';
+import { NativeAppLauncher } from './native-app-launcher.js';
 import { ReceiptStore } from './receipt-store.js';
 import { WindowsUiaClient } from './windows-uia-client.js';
 
@@ -15,12 +17,14 @@ const log = (event: string, fields: Record<string, unknown> = {}) => {
 
 const bridge = new BridgeClient({ requestTimeoutMs, log });
 const windows = new WindowsUiaClient(Math.min(requestTimeoutMs, 30_000));
-const runtime = new BrowserComputerRuntime(bridge, windows);
+const nativeApps = new NativeAppLauncher();
+const runtime = new BrowserComputerRuntime(bridge, windows, nativeApps);
 const receipts = new ReceiptStore();
 const server = new McpServer({ name: 'kv-computer-use', version: '0.4.0' });
 const json = (result: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] });
 
-server.tool('computer_runtime_status', 'Return installed Computer Use drivers, capabilities, health, and receipt-log location.', {}, async () => json({ ...(await runtime.status()), receiptLog: receipts.path() }));
+server.tool('computer_runtime_status', 'Return installed Computer Use drivers, capabilities, health, Native App Launcher availability, and receipt-log location.', {}, async () => json({ ...(await runtime.status()), receiptLog: receipts.path() }));
+server.tool('computer_list_apps', 'Return allowlisted native applications and their current availability without exposing arbitrary executable control.', {}, async () => json(await runtime.listApps()));
 server.tool('computer_observe', 'Observe Chrome and the Windows desktop through one bounded Computer Use contract.', {
   browser: z.boolean().optional(),
   windows: z.boolean().optional(),
@@ -29,17 +33,19 @@ server.tool('computer_observe', 'Observe Chrome and the Windows desktop through 
   maxElements: z.number().int().min(1).max(2_000).optional(),
   maxDepth: z.number().int().min(0).max(20).optional(),
 }, async (params) => json(await runtime.observe(params)));
-server.tool('computer_execute', 'Execute one policy-checked browser or controlled Windows UIA action, persist its receipt, and return it.', {
+server.tool('computer_execute', 'Execute one policy-checked browser, controlled Windows UIA, or allowlisted native application action, persist its receipt, and return it.', {
   actionId: z.string().min(1),
   action: z.object({
     type: z.string().min(1), command: z.string().min(1).optional(), params: z.record(z.string(), z.unknown()).optional(),
+    appId: z.string().regex(NATIVE_APP_ID_PATTERN).optional(),
     windowHandle: z.number().int().positive().optional(), targetRef: z.string().min(1).optional(), value: z.string().optional(),
     maxSearchElements: z.number().int().min(1).max(10_000).optional(), maxSearchDepth: z.number().int().min(0).max(50).optional(),
   }).passthrough(),
   reason: z.string().min(1),
   expectedPostcondition: z.object({
-    kind: z.enum(['none', 'url_contains', 'text_present', 'driver_result', 'window_focused', 'value_equals']),
+    kind: z.enum(['none', 'url_contains', 'text_present', 'driver_result', 'window_focused', 'value_equals', 'process_started']),
     value: z.string().optional(), windowHandle: z.number().int().positive().optional(), targetRef: z.string().min(1).optional(),
+    appId: z.string().regex(NATIVE_APP_ID_PATTERN).optional(), processId: z.number().int().positive().optional(),
   }),
   risk: z.enum(['read', 'reversible-write', 'external-write', 'destructive']),
   timeoutMs: z.number().int().positive().max(120_000).optional(),

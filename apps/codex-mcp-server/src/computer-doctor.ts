@@ -3,6 +3,7 @@ import { access, mkdir } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { BridgeClient } from './bridge-client.js';
+import { NativeAppLauncher, type NativeAppListResult } from './native-app-launcher.js';
 import { ReceiptStore } from './receipt-store.js';
 import { WindowsUiaClient } from './windows-uia-client.js';
 
@@ -51,6 +52,31 @@ export function finalizeReport(checks: DoctorCheck[], serverPath: string, nodePa
     checks,
     mcpConfig: buildMcpConfig(serverPath, nodePath),
     codexToml: buildCodexToml(serverPath, nodePath),
+  };
+}
+
+export function nativeAppDoctorCheck(status: NativeAppListResult): DoctorCheck {
+  const configurationValid = status.configurationErrors.length === 0;
+  const ok = status.platform === 'win32' && status.available && status.availableApps > 0 && configurationValid;
+  let message = 'Native App Launcher is available.';
+  if (status.platform !== 'win32') {
+    message = `Native App Launcher is unsupported on ${status.platform}.`;
+  } else if (!configurationValid) {
+    message = 'Native App Launcher rejected one or more allowlist configuration entries.';
+  } else if (!status.available || status.availableApps === 0) {
+    message = status.error?.message ?? 'No allowlisted native applications are available.';
+  }
+  return {
+    name: 'native-app-launcher',
+    required: false,
+    ok,
+    message,
+    details: {
+      platform: status.platform,
+      configuredApps: status.configuredApps,
+      availableApps: status.availableApps,
+      configurationErrors: status.configurationErrors,
+    },
   };
 }
 
@@ -106,6 +132,18 @@ export async function runComputerDoctor(): Promise<ComputerDoctorReport> {
     checks.push({ name: 'chrome-bridge', required: false, ok: false, message: error instanceof Error ? error.message : String(error), details: bridge.getStatus() as Record<string, unknown> });
   } finally {
     await bridge.close();
+  }
+
+  try {
+    const nativeApps = new NativeAppLauncher();
+    checks.push(nativeAppDoctorCheck(await nativeApps.status()));
+  } catch (error) {
+    checks.push({
+      name: 'native-app-launcher',
+      required: false,
+      ok: false,
+      message: `Native App Launcher failed to initialize: ${error instanceof Error ? error.message : String(error)}`,
+    });
   }
 
   return finalizeReport(checks, serverPath);

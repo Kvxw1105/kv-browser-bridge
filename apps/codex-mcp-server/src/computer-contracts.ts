@@ -4,6 +4,12 @@ export type DriverKind = 'browser' | 'windows-uia' | 'vision' | 'input' | 'nativ
 export type RiskLevel = 'read' | 'reversible-write' | 'external-write' | 'destructive';
 export type VerificationStatus = 'passed' | 'failed' | 'unknown';
 
+export const NATIVE_APP_ID_PATTERN = /^[a-z0-9._-]{1,64}$/;
+
+export function isValidNativeAppId(value: unknown): value is string {
+  return typeof value === 'string' && NATIVE_APP_ID_PATTERN.test(value);
+}
+
 export interface BrowserTargetObservation { tabId: number; windowId?: number; title?: string; url?: string; active?: boolean; }
 export interface WindowsObservation { protocolVersion: number; observationId: string; capturedAt: string; driver: 'windows-uia'; foregroundWindowHandle: number; windows: unknown[]; targetWindow?: unknown; elements: unknown[]; truncated: boolean; }
 export interface DriverFailure { driver: DriverKind; code: string; message: string; retryable?: boolean; }
@@ -14,9 +20,17 @@ export type ComputerAction =
   | { type: 'focus_window'; windowHandle: number }
   | { type: 'invoke_ref'; targetRef: string; windowHandle?: number; maxSearchElements?: number; maxSearchDepth?: number }
   | { type: 'set_value_ref'; targetRef: string; value: string; windowHandle?: number; maxSearchElements?: number; maxSearchDepth?: number }
-  | { type: 'launch_app' | 'click_ref' | 'click_point' | 'type_text' | 'hotkey' | 'wait'; [key: string]: unknown };
+  | { type: 'launch_app'; appId: string }
+  | { type: 'click_ref' | 'click_point' | 'type_text' | 'hotkey' | 'wait'; [key: string]: unknown };
 
-export interface Postcondition { kind: 'none' | 'url_contains' | 'text_present' | 'driver_result' | 'window_focused' | 'value_equals'; value?: string; windowHandle?: number; targetRef?: string; }
+export interface Postcondition {
+  kind: 'none' | 'url_contains' | 'text_present' | 'driver_result' | 'window_focused' | 'value_equals' | 'process_started';
+  value?: string;
+  windowHandle?: number;
+  targetRef?: string;
+  appId?: string;
+  processId?: number;
+}
 export interface ActionEnvelope { actionId: string; action: ComputerAction; reason: string; expectedPostcondition: Postcondition; risk: RiskLevel; timeoutMs: number; approved?: boolean; }
 export interface ActionReceipt { protocolVersion: number; actionId: string; startedAt: string; finishedAt: string; driver: DriverKind; status: 'completed' | 'blocked' | 'failed'; result?: unknown; error?: { code: string; message: string; retryable?: boolean }; verification: { status: VerificationStatus; evidence?: Record<string, unknown> }; }
 
@@ -24,7 +38,7 @@ const readCommands = new Set(['browser_get_tabs','browser_find','browser_downloa
 
 export function classifyActionRisk(action: ComputerAction): RiskLevel {
   if (action.type === 'wait') return 'read';
-  if (action.type === 'focus_window' || action.type === 'invoke_ref' || action.type === 'set_value_ref') return 'reversible-write';
+  if (action.type === 'focus_window' || action.type === 'invoke_ref' || action.type === 'set_value_ref' || action.type === 'launch_app') return 'reversible-write';
   if (action.type !== 'browser_command') return 'reversible-write';
   if (readCommands.has(action.command)) return 'read';
   if (action.command === 'browser_set_files') return 'external-write';
@@ -37,10 +51,39 @@ export function validateActionEnvelope(envelope: ActionEnvelope): string[] {
   if (!envelope.reason.trim()) errors.push('reason is required');
   if (!Number.isFinite(envelope.timeoutMs) || envelope.timeoutMs <= 0 || envelope.timeoutMs > 120_000) errors.push('timeoutMs must be between 1 and 120000');
   const expectedRisk = classifyActionRisk(envelope.action);
-  if (envelope.risk !== expectedRisk && envelope.risk !== 'destructive') errors.push(`risk mismatch: expected ${expectedRisk}`);
+  if (envelope.action.type === 'launch_app') {
+    if (envelope.risk !== expectedRisk) errors.push(`risk mismatch: expected ${expectedRisk}`);
+  } else if (envelope.risk !== expectedRisk && envelope.risk !== 'destructive') {
+    errors.push(`risk mismatch: expected ${expectedRisk}`);
+  }
   if ((envelope.risk === 'external-write' || envelope.risk === 'destructive') && envelope.approved !== true) errors.push('explicit approval is required for this risk level');
   if (envelope.action.type === 'focus_window' && (!Number.isInteger(envelope.action.windowHandle) || envelope.action.windowHandle <= 0)) errors.push('focus_window requires a positive windowHandle');
   if ((envelope.action.type === 'invoke_ref' || envelope.action.type === 'set_value_ref') && !envelope.action.targetRef.startsWith('uia:')) errors.push(`${envelope.action.type} requires a uia: targetRef`);
   if (envelope.action.type === 'set_value_ref' && typeof envelope.action.value !== 'string') errors.push('set_value_ref requires a string value');
+  if (envelope.action.type === 'launch_app') {
+    validateLaunchAppAction(envelope.action as unknown as Record<string, unknown>, errors);
+    if (envelope.expectedPostcondition.kind !== 'process_started') {
+      errors.push('launch_app requires a process_started postcondition');
+    } else if (envelope.expectedPostcondition.appId !== undefined) {
+      if (!isValidNativeAppId(envelope.expectedPostcondition.appId)) {
+        errors.push('process_started appId is invalid');
+      } else if (envelope.expectedPostcondition.appId !== envelope.action.appId) {
+        errors.push('process_started appId must match launch_app appId');
+      }
+    }
+  } else if (envelope.expectedPostcondition.kind === 'process_started') {
+    errors.push('process_started requires a launch_app action');
+  }
   return errors;
+}
+
+function validateLaunchAppAction(action: Record<string, unknown>, errors: string[]): void {
+  if (typeof action.appId !== 'string' || action.appId.length === 0) {
+    errors.push('launch_app requires appId');
+  } else if (!isValidNativeAppId(action.appId)) {
+    errors.push('launch_app appId must use 1-64 lowercase letters, digits, dots, underscores, or hyphens');
+  }
+  for (const key of Object.keys(action)) {
+    if (key !== 'type' && key !== 'appId') errors.push(`launch_app does not allow field ${key}`);
+  }
 }
