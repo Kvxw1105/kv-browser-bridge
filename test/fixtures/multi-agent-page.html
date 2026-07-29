@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Kv Browser Bridge multi-agent fixture</title>
+  </head>
+  <body>
+    <button id="button-a" type="button">Button A <span id="counter-a">0</span></button>
+    <button id="button-b" type="button">Button B <span id="counter-b">0</span></button>
+    <script>
+      for (const [buttonId, counterId] of [['button-a', 'counter-a'], ['button-b', 'counter-b']]) {
+        document.getElementById(buttonId).addEventListener('click', () => {
+          const counter = document.getElementById(counterId);
+          counter.textContent = String(Number(counter.textContent) + 1);
+        });
+      }
+    </script>
+  </body>
+</html>
