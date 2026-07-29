@@ -10,6 +10,8 @@ export type InstallerCommand =
   | { command: 'uninstall' }
   | { command: 'doctor'; json: boolean };
 
+export type CoordinationMode = 'off' | 'observe' | 'enforce';
+
 export function validateExtensionId(extensionId: string): string {
   if (!/^[a-p]{32}$/.test(extensionId)) {
     throw new Error('Chrome extension ID must be 32 lowercase letters from a to p.');
@@ -51,11 +53,17 @@ export function validateBridgePath(bridgePath: string): string {
   return bridgePath;
 }
 
-export function createKvWrapper(bridgePath: string, nodePath: string, runtimeMode?: 'shadow'): string {
+export function createKvWrapper(
+  bridgePath: string,
+  nodePath: string,
+  runtimeMode?: 'shadow',
+  coordinationMode?: CoordinationMode,
+): string {
   validateBridgePath(bridgePath);
   if (!nodePath) throw new Error('Node runtime path is required.');
-  const mode = runtimeMode ? `set "KBB_RUNTIME_MODE=${runtimeMode}"\r\n` : '';
-  return `@echo off\r\nREM Kv Browser Bridge wrapper - managed by Kv\r\n${mode}"${nodePath}" "${bridgePath}" %*\r\n`;
+  const runtime = runtimeMode ? `set "KBB_RUNTIME_MODE=${runtimeMode}"\r\n` : '';
+  const coordination = coordinationMode ? `set "KBB_COORDINATION_MODE=${coordinationMode}"\r\n` : '';
+  return `@echo off\r\nREM Kv Browser Bridge wrapper - managed by Kv\r\n${runtime}${coordination}"${nodePath}" "${bridgePath}" %*\r\n`;
 }
 
 export function isKvOwnedWrapper(contents: string): boolean {

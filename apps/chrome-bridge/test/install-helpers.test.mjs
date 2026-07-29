@@ -4,6 +4,7 @@ import {
   KV_NATIVE_HOST_NAME,
   LEGACY_NATIVE_HOST_NAME,
   createNativeHostManifest,
+  createKvWrapper,
   isKvOwnedManifest,
   isKvOwnedWrapper,
   parseInstallerArgs,
@@ -49,4 +50,16 @@ test('recognizes only Kv-owned manifest and wrapper content', () => {
   assert.equal(isKvOwnedWrapper('@echo off'), false);
   assert.equal(isKvOwnedManifest(manifest, 'C:\\bridge\\io.kv.browser_bridge.cmd'), true);
   assert.equal(isKvOwnedManifest({ ...manifest, description: 'other' }), false);
+});
+
+test('omits coordination mode by default and emits it only when explicitly requested', () => {
+  const defaultWrapper = createKvWrapper('C:\\bridge\\bridge.js', 'C:\\node\\node.exe');
+  assert.equal(defaultWrapper.includes('KBB_COORDINATION_MODE='), false);
+
+  const enforceWrapper = createKvWrapper('C:\\bridge\\bridge.js', 'C:\\node\\node.exe', undefined, 'enforce');
+  assert.match(enforceWrapper, /set "KBB_COORDINATION_MODE=enforce"/);
+
+  const observeWrapper = createKvWrapper('C:\\bridge\\bridge.js', 'C:\\node\\node.exe', 'shadow', 'observe');
+  assert.match(observeWrapper, /set "KBB_RUNTIME_MODE=shadow"/);
+  assert.match(observeWrapper, /set "KBB_COORDINATION_MODE=observe"/);
 });
