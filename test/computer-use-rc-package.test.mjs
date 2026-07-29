@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { mkdir, mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import test from 'node:test';
 import {
   commandWrapper,
@@ -9,6 +12,7 @@ import {
   smokeScript,
   uninstallScript,
 } from '../scripts/computer-use-rc-templates.mjs';
+import { validateComputerUseRc } from '../scripts/package-computer-use-rc.mjs';
 
 test('RC required-file contract includes unified status and all Windows entrypoints', () => {
   const expected = [
@@ -43,6 +47,37 @@ test('RC validator consumes the shared required-file contract', async () => {
   );
   assert.match(source, /for \(const path of computerUseRcRequiredFiles\)/);
   assert.match(source, /computerUseRcRequiredFiles\.length/);
+
+  const stage = await mkdtemp(join(tmpdir(), 'kv-computer-use-rc-test-'));
+  try {
+    const checksumTargets = [];
+    for (const path of computerUseRcRequiredFiles) {
+      if (path === 'SHA256SUMS.txt') continue;
+      const target = join(stage, ...path.split('/'));
+      await mkdir(dirname(target), { recursive: true });
+      await writeFile(target, '', 'utf8');
+      checksumTargets.push(path);
+    }
+    await writeFile(join(stage, 'extra-package-file.txt'), 'fixture', 'utf8');
+    checksumTargets.push('extra-package-file.txt');
+    const checksums = [];
+    for (const path of checksumTargets) {
+      const content = await readFile(join(stage, ...path.split('/')));
+      checksums.push(`${createHash('sha256').update(content).digest('hex')}  ${path}`);
+    }
+    await writeFile(join(stage, 'SHA256SUMS.txt'), `${checksums.join('\n')}\n`, 'utf8');
+
+    const result = await validateComputerUseRc(stage);
+    assert.equal(result.files, checksumTargets.length);
+
+    await unlink(join(stage, 'apps/codex-mcp-server/dist/computer-status.js'));
+    await assert.rejects(
+      validateComputerUseRc(stage),
+      /missing apps\/codex-mcp-server\/dist\/computer-status\.js/,
+    );
+  } finally {
+    await rm(stage, { recursive: true, force: true });
+  }
 });
 
 test('control center uses unified status and accepts valid JSON before judging exit code', () => {
