@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowLeft, CircleAlert, Loader2, Play, RefreshCw, Square } from 'lucide-react';
+import { ArrowLeft, CircleAlert, Loader2, Play, RefreshCw, Square, Trash2 } from 'lucide-react';
 import type { IdentityConsoleItem } from '../../shared/identity-console';
 import '../identity-console.css';
 
@@ -43,6 +43,12 @@ export function IdentityConsoleView({ onBack }: IdentityConsoleViewProps) {
     setIdentities((current) => current.map((item) => item.manifest.identityId === identityId ? identity : item));
     if ('error' in result.data && result.data.error) setError(result.data.error.message);
     setBusyIdentity(undefined);
+  };
+  const remove = async (identityId: string): Promise<void> => {
+    if (!window.confirm(`Remove ${identityId}? Chrome profile data will be retained.`)) return;
+    setBusyIdentity(identityId);
+    try { const result = await window.identityConsole.delete(identityId); if (!result.ok) setError(`${result.error?.code ?? 'DELETE_FAILED'}: ${result.error?.message ?? ''}`); else setIdentities((current) => current.filter((item) => item.manifest.identityId !== identityId)); }
+    finally { setBusyIdentity(undefined); }
   };
 
   return (
@@ -117,6 +123,10 @@ export function IdentityConsoleView({ onBack }: IdentityConsoleViewProps) {
                   <button onClick={() => void operate(id, 'refresh')} disabled={busy}>
                     <RefreshCw size={14} />
                     Refresh
+                  </button>
+                  <button onClick={() => void remove(id)} disabled={busy || running} title="Remove configuration; profile is retained">
+                    <Trash2 size={14} />
+                    Delete
                   </button>
                 </div>
               </article>
