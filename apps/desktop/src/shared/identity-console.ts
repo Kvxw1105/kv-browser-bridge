@@ -42,6 +42,7 @@ export interface IdentityConsoleOperationResult {
   identity: IdentityConsoleItem;
   error?: IdentityConsoleError;
 }
+export interface IdentityConsoleLog { operation: string; identityId?: string; startedAt: string; completedAt: string; ok: boolean; errorCode?: string; errorMessage?: string; }
 
 export interface IdentityConsoleApiResult<T> {
   ok: boolean;

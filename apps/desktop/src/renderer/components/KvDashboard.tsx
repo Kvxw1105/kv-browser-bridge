@@ -8,7 +8,7 @@ export function KvDashboard({ openConsole, openFolder, newProject }: { openConso
   const [loading, setLoading] = useState(false);
   const refresh = async (): Promise<void> => {
     setLoading(true);
-    try { const result = await window.identityConsole.list(); if (result.ok) setItems(result.data ?? []); }
+    try { const result = await window.identityConsole.refreshAll(); if (result.ok) setItems(result.data ?? []); }
     finally { setLoading(false); }
   };
   useEffect(() => { void refresh(); }, []);
