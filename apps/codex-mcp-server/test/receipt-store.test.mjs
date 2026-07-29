@@ -28,6 +28,35 @@ const receipt = (actionId, status = 'completed') => ({
   },
 });
 
+const nativeReceipt = (actionId) => ({
+  protocolVersion: 1,
+  actionId,
+  startedAt: new Date().toISOString(),
+  finishedAt: new Date().toISOString(),
+  driver: 'native-app',
+  status: 'completed',
+  result: {
+    action: 'launch_app',
+    appId: 'editor',
+    displayName: 'Safe Editor',
+    pid: 8123,
+    executableName: 'editor.exe',
+    source: 'configured',
+    startedAt: new Date().toISOString(),
+    command: 'C:\\private\\editor.exe',
+    path: 'C:\\private',
+    args: ['--secret'],
+    cwd: 'C:\\private',
+    env: { TOKEN: 'secret' },
+    shell: 'cmd.exe /c',
+    allowlistJson: '{"secret":true}',
+  },
+  verification: {
+    status: 'passed',
+    evidence: { appId: 'editor', pid: 8123 },
+  },
+});
+
 test('persists, lists, and finds action receipts', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'kv-receipts-'));
   try {
@@ -52,6 +81,30 @@ test('persists, lists, and finds action receipts', async () => {
       valueSet: true,
     });
     assert.deepEqual(saved.verification, { status: 'passed' });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('safe native receipt keeps launch identity and removes control details', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'kv-native-receipts-'));
+  try {
+    const path = join(dir, 'receipts.jsonl');
+    const store = new ReceiptStore(path);
+    await store.append(nativeReceipt('native-1'));
+    const contents = await readFile(path, 'utf8');
+    const saved = JSON.parse(contents);
+    assert.deepEqual(saved.result, {
+      action: 'launch_app',
+      appId: 'editor',
+      displayName: 'Safe Editor',
+      pid: 8123,
+      executableName: 'editor.exe',
+      source: 'configured',
+    });
+    for (const secret of ['C:\\private', '--secret', 'TOKEN', 'allowlistJson', 'cmd.exe /c']) {
+      assert.equal(contents.includes(secret), false);
+    }
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
