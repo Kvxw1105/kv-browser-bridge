@@ -29,6 +29,22 @@ test('connects clients, scopes default tabs, and exposes status', () => {
   assert.deepEqual(coordinator.status().clients.map((client) => client.clientId), ['codex', 'newmax']);
 });
 
+test('rejects duplicate session ids without replacing the connected owner', () => {
+  const { coordinator } = setup();
+  coordinator.connect(identity('codex', 'Codex'), 'session-a');
+  const lease = coordinator.acquire('session-a', 'tab:9', 'write', 5_000);
+
+  assert.throws(() => coordinator.connect(identity('newmax', 'New Max'), 'session-a'), (error) => {
+    assert.ok(error instanceof CoordinatorError);
+    assert.equal(error.code, 'INVALID_REQUEST');
+    assert.equal(error.details.sessionId, 'session-a');
+    return true;
+  });
+  assert.equal(coordinator.status().clients[0].clientId, 'codex');
+  assert.equal(coordinator.status().leases[0].id, lease.id);
+  assert.equal(coordinator.status().leases[0].ownerSessionId, 'session-a');
+});
+
 test('validates identity, resources, and lease TTL', () => {
   const { coordinator } = setup();
   assert.throws(() => coordinator.connect(identity('   '), 'session-a'), (error) => error.code === 'INVALID_REQUEST');
@@ -106,6 +122,27 @@ test('quarantine blocks other owners and remains until TTL', () => {
   assert.throws(() => coordinator.assertWriteAllowed('session-b', 5), (error) => error.code === 'RESOURCE_QUARANTINED');
   advance(30_001);
   assert.doesNotThrow(() => coordinator.assertWriteAllowed('session-b', 5));
+});
+
+test('quarantine rejects a tab owned by another active session', () => {
+  const { coordinator } = setup('enforce');
+  coordinator.connect(identity('a', 'Agent A'), 'session-a');
+  coordinator.connect(identity('b', 'Agent B'), 'session-b');
+  const lease = coordinator.acquire('session-a', 'tab:6', 'write', 5_000);
+
+  assert.throws(() => coordinator.quarantineTab('session-b', 6), (error) => {
+    assert.ok(error instanceof CoordinatorError);
+    assert.equal(error.code, 'RESOURCE_BUSY');
+    assert.deepEqual(error.details, {
+      resource: 'tab:6',
+      owner: 'Agent A',
+      purpose: 'write',
+      retryAfterMs: 5_000,
+    });
+    return true;
+  });
+  assert.deepEqual(coordinator.status().leases.map((entry) => entry.id), [lease.id]);
+  assert.equal(coordinator.status().leases[0].state, 'active');
 });
 
 test('recorder is globally exclusive', () => {

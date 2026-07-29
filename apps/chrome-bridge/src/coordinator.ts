@@ -91,6 +91,11 @@ export class MultiAgentCoordinator {
   connect(identity: AgentIdentity, sessionId: string): AgentSession {
     const normalizedSessionId = normalizeText(sessionId, 'sessionId');
     const normalizedIdentity = normalizeIdentity(identity);
+    if (this.sessions.has(normalizedSessionId)) {
+      throw new CoordinatorError('INVALID_REQUEST', 'Coordinator session is already connected', false, {
+        sessionId: normalizedSessionId,
+      });
+    }
     this.cleanupExpired();
     const timestamp = iso(this.now());
     const session: AgentSession = {
@@ -224,12 +229,23 @@ export class MultiAgentCoordinator {
     const ttl = validateTtl(ttlMs);
     this.cleanupExpired();
     const resource = `tab:${tabId}` as LeaseResource;
-    const ownLease = this.activeResourceLeases(resource).find((lease) => lease.ownerSessionId === sessionId);
+    const resourceLeases = this.activeResourceLeases(resource);
+    const otherActiveLease = resourceLeases.find(
+      (lease) => lease.state === 'active' && lease.ownerSessionId !== sessionId,
+    );
+    if (otherActiveLease) {
+      throw this.busyError(otherActiveLease, this.retryAfter(otherActiveLease));
+    }
+    const ownLease = resourceLeases.find((lease) => lease.ownerSessionId === sessionId);
     if (ownLease) {
       ownLease.state = 'quarantined';
       ownLease.expiresAt = iso(this.now() + ttl);
       return copyLease(ownLease);
     }
+    const otherQuarantine = resourceLeases.find(
+      (lease) => lease.state === 'quarantined' && lease.ownerSessionId !== sessionId,
+    );
+    if (otherQuarantine) throw this.quarantinedError(otherQuarantine);
     return copyLease(this.createLease(resource, sessionId, 'UNKNOWN_OUTCOME', ttl, 'quarantined'));
   }
 
