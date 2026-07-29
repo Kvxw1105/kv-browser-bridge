@@ -8,6 +8,9 @@ internal static class Program
 {
     private const int ProtocolVersion = 1;
     private const int SwRestore = 9;
+    private const uint BmClick = 0x00F5;
+    private const uint SmtoAbortIfHung = 0x0002;
+    private const uint NativeInvokeTimeoutMs = 2_000;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -129,12 +132,18 @@ internal static class Program
     private static object FocusWindow(JsonElement parameters)
     {
         var windowHandle = ReadRequiredLong(parameters, "windowHandle");
+        var foregroundWindowHandle = EnsureForegroundWindow(windowHandle);
+        return new { action = "focus_window", windowHandle, foregroundWindowHandle };
+    }
+
+    private static long EnsureForegroundWindow(long windowHandle)
+    {
         var handle = new IntPtr(windowHandle);
         if (!IsWindow(handle))
             throw new DriverFaultException("WINDOW_NOT_FOUND", $"Window handle {windowHandle} does not exist.", true);
 
         _ = ShowWindowAsync(handle, SwRestore);
-        if (!SetForegroundWindow(handle))
+        if (GetForegroundWindow() != handle && !SetForegroundWindow(handle))
             throw new DriverFaultException("FOCUS_REJECTED", $"Windows rejected foreground activation for {windowHandle}.", true);
 
         Thread.Sleep(75);
@@ -142,7 +151,7 @@ internal static class Program
         if (foregroundWindowHandle != windowHandle)
             throw new DriverFaultException("FOCUS_NOT_CONFIRMED", $"Foreground window is {foregroundWindowHandle}, expected {windowHandle}.", true);
 
-        return new { action = "focus_window", windowHandle, foregroundWindowHandle };
+        return foregroundWindowHandle;
     }
 
     private static object InvokeRef(JsonElement parameters)
@@ -150,17 +159,48 @@ internal static class Program
         var targetRef = ReadRequiredString(parameters, "targetRef");
         var windowHandle = ReadOptionalLong(parameters, "windowHandle") ?? GetForegroundWindow().ToInt64();
         var element = ResolveElement(windowHandle, targetRef, parameters);
-        if (!element.Current.IsEnabled)
+        var current = element.Current;
+        if (!current.IsEnabled)
             throw new DriverFaultException("ELEMENT_DISABLED", $"Element {targetRef} is disabled.", true);
         if (!element.TryGetCurrentPattern(InvokePattern.Pattern, out var rawPattern) || rawPattern is not InvokePattern invokePattern)
             throw new DriverFaultException("PATTERN_UNAVAILABLE", $"Element {targetRef} does not expose InvokePattern.", false);
 
-        invokePattern.Invoke();
+        var nativeWindowHandle = current.NativeWindowHandle;
+        string dispatchMethod;
+        if (current.ControlType == ControlType.Button && nativeWindowHandle != 0 && IsWindow(new IntPtr(nativeWindowHandle)))
+        {
+            _ = EnsureForegroundWindow(windowHandle);
+            var dispatched = SendMessageTimeout(
+                new IntPtr(nativeWindowHandle),
+                BmClick,
+                IntPtr.Zero,
+                IntPtr.Zero,
+                SmtoAbortIfHung,
+                NativeInvokeTimeoutMs,
+                out _);
+            if (dispatched == IntPtr.Zero)
+            {
+                var nativeError = Marshal.GetLastWin32Error();
+                throw new DriverFaultException(
+                    "INVOKE_DISPATCH_FAILED",
+                    $"Native button dispatch failed for {targetRef}. Win32Error={nativeError}.",
+                    true);
+            }
+            dispatchMethod = "win32-bm-click";
+        }
+        else
+        {
+            invokePattern.Invoke();
+            dispatchMethod = "uia-invoke-pattern";
+        }
+
         return new
         {
             action = "invoke_ref",
             windowHandle,
             targetRef,
+            dispatchMethod,
+            nativeWindowHandle,
             element = TryMapElement(element, 0),
         };
     }
@@ -391,6 +431,16 @@ internal static class Program
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr SendMessageTimeout(
+        IntPtr hWnd,
+        uint msg,
+        IntPtr wParam,
+        IntPtr lParam,
+        uint flags,
+        uint timeout,
+        out UIntPtr result);
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
