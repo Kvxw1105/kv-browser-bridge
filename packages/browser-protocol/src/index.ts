@@ -11,7 +11,7 @@ export const PIPE_LINE_MAX_BYTES = 1024 * 1024;
 export * from './flow-recorder.js';
 export * from './coordinator.js';
 
-import type { CoordinationPipeMethod, CoordinationStatus } from './coordinator.js';
+import type { CoordinationPipeMethod, CoordinationStatusView } from './coordinator.js';
 import { isAgentIdentity } from './coordinator.js';
 
 export type BrowserAction =
@@ -117,7 +117,7 @@ export type NativeMessage = BrowserRequest | BrowserResponse | NativeChunk | {
   type: 'pong';
 } | {
   type: 'bridge:coordination_status';
-  status: CoordinationStatus;
+  status: CoordinationStatusView;
 };
 
 export interface PipeHello {
@@ -170,7 +170,7 @@ export interface ConnectionStatusPipeEvent {
 export interface CoordinationStatusPipeEvent {
   type: 'event';
   event: 'coordination:status';
-  data: CoordinationStatus;
+  data: CoordinationStatusView;
 }
 
 export type PipeEvent = ConnectionStatusPipeEvent | CoordinationStatusPipeEvent;

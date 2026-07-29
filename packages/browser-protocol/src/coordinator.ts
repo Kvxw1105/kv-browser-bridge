@@ -35,6 +35,12 @@ export interface CoordinationStatus {
   leases: ResourceLease[];
 }
 
+export interface CoordinationStatusView {
+  mode: CoordinatorMode;
+  clients: Array<Pick<AgentSession, 'clientId' | 'clientName' | 'defaultTabId'>>;
+  leases: Array<Pick<ResourceLease, 'id' | 'resource' | 'purpose' | 'state' | 'expiresAt'>>;
+}
+
 export type CoordinationPipeMethod =
   | 'browser_get_clients'
   | 'browser_lease_acquire'
@@ -59,7 +65,9 @@ export function isAgentIdentity(value: unknown): value is AgentIdentity {
 }
 
 function isNonEmptyString(value: unknown): value is string {
-  return typeof value === 'string' && value.length > 0;
+  return typeof value === 'string'
+    && value.trim().length > 0
+    && value.trim().length <= 100;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

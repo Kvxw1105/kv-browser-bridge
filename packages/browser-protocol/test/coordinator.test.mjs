@@ -27,21 +27,42 @@ test('rejects malformed agent identities in pipe hello', () => {
   assert.equal(isPipeHello({
     type: 'hello', token: 'TOKEN', version: 1, clientId: 'client-1', capabilities: ['admin'],
   }), false);
+  for (const field of ['clientId', 'clientName', 'instanceId']) {
+    const identity = {
+      clientId: 'client-1', clientName: 'Coordinator', instanceId: 'instance-1', capabilities: ['read'],
+      [field]: '   ',
+    };
+    assert.equal(isAgentIdentity(identity), false, `${field} whitespace`);
+    assert.equal(isPipeHello({ type: 'hello', token: 'TOKEN', version: 1, ...identity }), false, `${field} hello`);
+  }
+  assert.equal(isAgentIdentity({
+    clientId: 'client-1', clientName: 42, instanceId: 'instance-1', capabilities: ['read'],
+  }), false);
+  assert.equal(isPipeHello({
+    type: 'hello', token: 'TOKEN', version: 1,
+    clientId: 'x'.repeat(101), clientName: 'Coordinator', instanceId: 'instance-1', capabilities: ['read'],
+  }), false);
 });
 
-test('represents a coordination status without transport-sensitive data', () => {
-  const status = {
+test('round-trips redacted coordination status transport messages', () => {
+  const statusView = {
     mode: 'enforce',
     clients: [{
-      clientId: 'client-1', clientName: 'Coordinator', instanceId: 'instance-1', capabilities: ['record'],
-      sessionId: 'session-1', connectedAt: '2026-07-30T00:00:00.000Z', lastSeenAt: '2026-07-30T00:00:01.000Z', defaultTabId: 42,
+      clientId: 'client-1', clientName: 'Coordinator', defaultTabId: 42,
     }],
     leases: [{
-      id: 'lease-1', resource: 'tab:42', ownerSessionId: 'session-1', purpose: 'recording', state: 'active',
-      acquiredAt: '2026-07-30T00:00:00.000Z', expiresAt: '2026-07-30T00:01:00.000Z',
+      id: 'lease-1', resource: 'tab:42', purpose: 'recording', state: 'active', expiresAt: '2026-07-30T00:01:00.000Z',
     }],
   };
-  assert.deepEqual(JSON.parse(JSON.stringify(status)), status);
+  const messages = [
+    { type: 'event', event: 'coordination:status', data: statusView },
+    { type: 'bridge:coordination_status', status: statusView },
+  ];
+  const payload = JSON.stringify(messages);
+  assert.deepEqual(JSON.parse(payload), messages);
+  for (const field of ['instanceId', 'sessionId', 'ownerSessionId', 'connectedAt', 'lastSeenAt', 'acquiredAt']) {
+    assert.equal(payload.includes(field), false, field);
+  }
 });
 
 test('keeps coordination pipe methods separate from browser actions', () => {
