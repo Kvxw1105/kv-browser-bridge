@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ArrowLeft, CircleAlert, Loader2, Play, RefreshCw, Square } from 'lucide-react';
 import type { IdentityConsoleItem } from '../../shared/identity-console';
+import '../identity-console.css';
 
 interface IdentityConsoleViewProps {
   onBack(): void;
