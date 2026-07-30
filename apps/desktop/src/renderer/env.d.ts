@@ -2,7 +2,7 @@
 import type { ClientMessage, ServerMessage } from '@claude-code-browser/shared';
 import type { IdentityConsoleApiResult, IdentityConsoleItem, IdentityConsoleOperationResult } from '../shared/identity-console';
 import type { IdentityConsoleLog } from '../shared/identity-console';
-import type { IdentityManifest } from '../../chrome-bridge/src/identity/model';
+import type { IdentityManifest } from '../shared/identity-manifest';
 
 declare global {
   interface Window {

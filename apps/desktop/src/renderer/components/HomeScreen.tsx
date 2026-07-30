@@ -4,7 +4,7 @@ import { IdentityConsoleView } from './IdentityConsoleView';
 import { IdentityForm } from './IdentityForm';
 import { KvDashboard } from './KvDashboard';
 import { NewProjectView } from './NewProjectView';
-import type { IdentityManifest } from '../../../../chrome-bridge/src/identity/model';
+import type { IdentityManifest } from '../../shared/identity-manifest';
 
 type HomeView = 'dashboard' | 'new-project' | 'identity-console' | 'identity-form';
 
