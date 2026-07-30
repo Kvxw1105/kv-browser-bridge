@@ -5,6 +5,10 @@ export type RiskLevel = 'read' | 'reversible-write' | 'external-write' | 'destru
 export type VerificationStatus = 'passed' | 'failed' | 'unknown';
 
 export const NATIVE_APP_ID_PATTERN = /^[a-z0-9._-]{1,64}$/;
+export const SEQUENCE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+export const STEP_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+export const MAX_SEQUENCE_STEPS = 10;
+export const MAX_SEQUENCE_TIMEOUT_MS = 300_000;
 
 export function isValidNativeAppId(value: unknown): value is string {
   return typeof value === 'string' && NATIVE_APP_ID_PATTERN.test(value);
@@ -33,6 +37,55 @@ export interface Postcondition {
 }
 export interface ActionEnvelope { actionId: string; action: ComputerAction; reason: string; expectedPostcondition: Postcondition; risk: RiskLevel; timeoutMs: number; approved?: boolean; }
 export interface ActionReceipt { protocolVersion: number; actionId: string; startedAt: string; finishedAt: string; driver: DriverKind; status: 'completed' | 'blocked' | 'failed'; result?: unknown; error?: { code: string; message: string; retryable?: boolean }; verification: { status: VerificationStatus; evidence?: Record<string, unknown> }; }
+
+export interface ComputerActionStep {
+  stepId: string;
+  action: ComputerAction;
+  reason: string;
+  expectedPostcondition: Postcondition;
+  risk: RiskLevel;
+  timeoutMs?: number;
+  approved?: boolean;
+}
+
+export interface ComputerActionSequence {
+  sequenceId: string;
+  steps: ComputerActionStep[];
+  stopOnFailure?: true;
+  timeoutMs?: number;
+}
+
+export type SequenceErrorCode =
+  | 'SEQUENCE_INVALID'
+  | 'SEQUENCE_TOO_LARGE'
+  | 'DUPLICATE_STEP_ID'
+  | 'NESTED_SEQUENCE_FORBIDDEN'
+  | 'STOP_ON_FAILURE_REQUIRED'
+  | 'SEQUENCE_TIMEOUT'
+  | 'STEP_BLOCKED'
+  | 'STEP_FAILED';
+
+export interface SequenceError {
+  code: SequenceErrorCode;
+  message: string;
+  retryable: boolean;
+  stepId?: string;
+}
+
+export interface SequenceReceipt {
+  protocolVersion: number;
+  sequenceId: string;
+  startedAt: string;
+  finishedAt: string;
+  status: 'completed' | 'blocked' | 'failed' | 'partially-completed';
+  risk: RiskLevel;
+  totalSteps: number;
+  completedSteps: number;
+  stoppedAtStep?: string;
+  skippedSteps?: string[];
+  stepReceipts: ActionReceipt[];
+  error?: SequenceError;
+}
 
 const readCommands = new Set(['browser_get_tabs','browser_find','browser_download_status','browser_list_bookmarks','browser_list_extensions','browser_snapshot','browser_screenshot','browser_wait_for','browser_get_text','browser_get_url','browser_console_logs','browser_console_errors','browser_network_requests','browser_network_failures','browser_get_response_body','browser_inspect_element','browser_get_element_styles','browser_page_metrics','browser_connection_status']);
 
