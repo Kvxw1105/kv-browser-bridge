@@ -34,7 +34,7 @@
     "build:codex-mcp": "npm run build -w apps/codex-mcp-server",
     "build:local-chrome": "npm run build:bridge && npm run build:codex-mcp && npm run build:extension",
     "check:local-chrome": "npm run build -w packages/shared && npm run build:local-chrome && npx tsc -p apps/chrome-bridge/tsconfig.json --noEmit && npx tsc -p apps/codex-mcp-server/tsconfig.json --noEmit && npx tsc -p apps/extension/tsconfig.json --noEmit",
-    "check:desktop": "npm run build -w apps/chrome-bridge && npm run typecheck -w apps/desktop && npm run build -w apps/desktop",
+    "check:desktop": "npm run build -w packages/browser-protocol -w packages/shared -w packages/agent-core -w apps/chrome-bridge && npm run typecheck -w apps/desktop && npm run build -w apps/desktop",
     "test:local-chrome": "npm run build -w packages/browser-protocol -w apps/chrome-bridge -w apps/codex-mcp-server && node --test packages/browser-protocol/test/*.test.mjs apps/chrome-bridge/test/*.test.mjs apps/codex-mcp-server/test/*.test.mjs",
     "test:branding": "node --test test/branding.test.mjs",
     "test:identity-setup": "node --test test/network-identity-setup.test.mjs",
