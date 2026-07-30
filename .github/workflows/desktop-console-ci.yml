@@ -24,10 +24,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
       - name: Build identity runtime
-        run: npm run build -w apps/chrome-bridge
+        run: npm run build -w packages/browser-protocol -w apps/chrome-bridge
       - name: Test identity console service
         run: node --test apps/chrome-bridge/test/console-service.test.mjs
       - name: Typecheck desktop
-        run: npm run typecheck -w apps/desktop
+        run: npm run build -w packages/shared -w packages/agent-core && npm run typecheck -w apps/desktop
       - name: Build desktop
         run: npm run build -w apps/desktop
