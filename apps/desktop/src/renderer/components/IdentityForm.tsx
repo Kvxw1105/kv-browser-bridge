@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { IdentityManifest } from '../../../../chrome-bridge/src/identity/model';
+import type { IdentityManifest } from '../../shared/identity-manifest';
 
 export function IdentityForm({ onDone, onCancel, initial }: { onDone(): void; onCancel(): void; initial?: IdentityManifest }) {
   const [label, setLabel] = useState(initial?.accountLabel ?? ''); const [id, setId] = useState(initial?.identityId ?? ''); const [chrome, setChrome] = useState(initial?.browser.executablePath ?? ''); const [profile, setProfile] = useState(initial?.browser.userDataDir ?? ''); const [protocol, setProtocol] = useState(initial?.proxy.protocol ?? 'http'); const [host, setHost] = useState(initial?.proxy.host ?? '127.0.0.1'); const [port, setPort] = useState(initial ? String(initial.proxy.port) : ''); const [locale, setLocale] = useState(initial?.environment.locale ?? 'zh-CN'); const [timezone, setTimezone] = useState(initial?.environment.timezone ?? 'Asia/Shanghai'); const [idTouched, setIdTouched] = useState(Boolean(initial)); const [error, setError] = useState(''); const [saving, setSaving] = useState(false);

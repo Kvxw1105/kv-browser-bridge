@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ArrowLeft, CircleAlert, Loader2, Play, RefreshCw, Square, Trash2, Pencil } from 'lucide-react';
 import type { IdentityConsoleItem } from '../../shared/identity-console';
 import type { IdentityConsoleLog } from '../../shared/identity-console';
-import type { IdentityManifest } from '../../../../chrome-bridge/src/identity/model';
+import type { IdentityManifest } from '../../shared/identity-manifest';
 import '../identity-console.css';
 
 interface IdentityConsoleViewProps {
