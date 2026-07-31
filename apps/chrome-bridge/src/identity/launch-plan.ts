@@ -37,12 +37,18 @@ export function buildLaunchPlan(
     `--user-data-dir=${manifest.browser.userDataDir}`,
     `--proxy-server=${proxyServer}`,
     `--lang=${manifest.environment.locale}`,
-    '--remote-debugging-address=127.0.0.1',
-    '--remote-debugging-port=0',
     '--no-first-run',
     '--no-default-browser-check',
   ];
+  const cdpPipe = env.KV_BROWSER_CDP_PIPE === '1';
+  if (cdpPipe) args.push('--remote-debugging-pipe', '--enable-unsafe-extension-debugging');
+  else args.push('--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0');
+  if (env.KV_BROWSER_CHROME_VERBOSE_LOGGING === '1') args.push('--enable-logging=stderr', '--v=1');
   if (manifest.browser.profileDirectory) args.push(`--profile-directory=${manifest.browser.profileDirectory}`);
+  const extensionPath = env.KV_BROWSER_EXTENSION_PATH;
+  if (!cdpPipe && extensionPath && existsSync(extensionPath)) {
+    args.push(`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`);
+  }
   if (manifest.policies.ipv6 === 'disabled') args.push('--disable-ipv6');
   args.push('about:blank');
 

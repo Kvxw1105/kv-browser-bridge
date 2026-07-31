@@ -31,7 +31,8 @@ test('console persists identities and rejects duplicate profile and proxy bindin
   service.createIdentity(manifest('account-a'));
   assert.equal(service.listIdentities()[0].status, 'not-started');
   assert.throws(() => service.createIdentity({ ...manifest('account-b', 7891), browser: { executablePath: process.execPath, userDataDir: join(tmpdir(), 'ACCOUNT-A') } }), /PROFILE_PATH_DUPLICATE/);
-  assert.throws(() => service.createIdentity({ ...manifest('account-b', 7890), browser: { executablePath: process.execPath, userDataDir: join(tmpdir(), 'other-profile') } }), /PROXY_ENDPOINT_DUPLICATE/);
+  service.createIdentity({ ...manifest('account-b', 7890), browser: { executablePath: process.execPath, userDataDir: join(tmpdir(), 'other-profile') } });
+  assert.equal(service.listIdentities().length, 2);
 });
 
 test('lightweight setup entries are not mistaken for full identity manifests', () => {

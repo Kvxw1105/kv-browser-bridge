@@ -35,6 +35,7 @@ export class NodeBrowserProcessAdapter implements BrowserProcessAdapter {
     if (process.platform === 'win32') {
       const result = spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, encoding: 'utf8' });
       if (result.status !== 0 && this.isAlive(pid)) throw new Error(`taskkill failed for PID ${pid}: ${result.stderr || result.stdout}`);
+      sleepSync(750);
       return;
     }
     process.kill(pid, 'SIGTERM');

@@ -12,6 +12,8 @@ import {
   isValidNativeHostManifest,
   parseInstallerArgs,
   validateBridgePath,
+  isKvOwnedManifest,
+  isKvOwnedWrapper,
 } from './install-helpers.js';
 
 const currentDir = dirname(fileURLToPath(import.meta.url));
@@ -129,7 +131,12 @@ export function install(extensionId: string, deps: { fs?: InstallerFs; runner?: 
   const previousManifest = artifactContents(fs, paths.manifest);
   const previousRegistry = readRegistrySnapshot(runner, 'snapshot');
   const hasPriorState = previousWrapper !== undefined || previousManifest !== undefined || previousRegistry.keyExists;
-  if (hasPriorState && (previousWrapper !== wrapper || previousManifest !== manifestContents || previousRegistry.value !== paths.manifest)) {
+  const priorKvInstallation = previousWrapper !== undefined
+    && isKvOwnedWrapper(previousWrapper)
+    && previousManifest !== undefined
+    && isKvOwnedManifest(readJson(fs, paths.manifest))
+    && previousRegistry.value === paths.manifest;
+  if (hasPriorState && !priorKvInstallation && (previousWrapper !== wrapper || previousManifest !== manifestContents || previousRegistry.value !== paths.manifest)) {
     throw new Error('Refusing to replace an inconsistent or non-Kv installation state.');
   }
   fs.mkdirSync(dirname(paths.manifest), { recursive: true });

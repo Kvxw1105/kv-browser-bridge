@@ -1,5 +1,7 @@
 import { clearSelectedTab, getSelectedTabId, handleBrowserRequest, setSelectedTab, type BrowserResponse } from './browser-executor';
 
+console.info('[kv-browser-bridge-extension]', JSON.stringify({ event: 'service_worker_module_loaded', at: new Date().toISOString() }));
+
 const HOST_NAME = 'io.kv.browser_bridge';
 const MAX_NATIVE_MESSAGE_BYTES = 480 * 1024;
 

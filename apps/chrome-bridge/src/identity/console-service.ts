@@ -5,11 +5,12 @@ import type { IdentityManifest, RuntimeStatus } from './model.js';
 import { IdentityRuntime } from './session.js';
 import { readNetworkIdentityRecord } from './network-observation.js';
 import { runIdentityDoctor } from './windows-doctor.js';
+import { SessionSupervisor, type ManagedSessionSnapshot } from './session-supervisor.js';
 
 export type ConsoleStatus = 'not-started' | 'starting' | 'running' | 'stopped' | 'failed' | 'frozen' | 'unverified' | 'warning';
 export interface ConsoleLog { operation: string; identityId?: string; startedAt: string; completedAt: string; ok: boolean; errorCode?: string; errorMessage?: string; }
 export interface ConsoleError { code: string; message: string; }
-export interface ConsoleIdentity { manifest: IdentityManifest; status: ConsoleStatus; runtime: RuntimeStatus; publicIp?: string; frozen: boolean; lastError?: ConsoleError; }
+export interface ConsoleIdentity { manifest: IdentityManifest; status: ConsoleStatus; runtime: RuntimeStatus; publicIp?: string; frozen: boolean; session?: ManagedSessionSnapshot; lastError?: ConsoleError; }
 export interface ConsoleOperationResult { ok: boolean; identity: ConsoleIdentity; error?: ConsoleError; }
 
 /** Structured local service used by desktop IPC. It deliberately owns only console setup, not browser policy. */
@@ -20,6 +21,7 @@ export class IdentityConsoleService {
   private readonly logPath: string;
   private readonly runtimeRoot: string;
   private readonly runtime: IdentityRuntime;
+  private readonly supervisor?: SessionSupervisor;
 
   constructor(private readonly localDir: string, runtimeRoot = join(localDir, 'runtime'), runtime?: IdentityRuntime) {
     mkdirSync(localDir, { recursive: true, mode: 0o700 });
@@ -29,6 +31,7 @@ export class IdentityConsoleService {
     this.logPath = join(localDir, 'operations.json');
     this.runtimeRoot = runtimeRoot;
     this.runtime = runtime ?? new IdentityRuntime(runtimeRoot);
+    if (!runtime) this.supervisor = new SessionSupervisor(runtimeRoot, { runtime: this.runtime });
   }
 
   listIdentities(): ConsoleIdentity[] {
@@ -67,6 +70,12 @@ export class IdentityConsoleService {
 
   async startIdentity(identityId: string): Promise<ConsoleOperationResult> {
     const manifest = this.get(identityId);
+    if (this.supervisor) {
+      const result = await this.supervisor.start(manifest);
+      const error = result.snapshot.error;
+      this.log('startIdentity', identityId, result.ok, error?.code, error?.message);
+      return { ok: result.ok, identity: this.toConsoleIdentity(manifest, error, result.snapshot), error };
+    }
     const result = await this.runtime.startVerified(manifest);
     this.log('startIdentity', identityId, result.ok, result.error?.code, result.error?.message);
     return { ok: result.ok, identity: this.toConsoleIdentity(manifest, result.error), error: result.error };
@@ -74,7 +83,7 @@ export class IdentityConsoleService {
 
   stopIdentity(identityId: string): ConsoleOperationResult {
     const manifest = this.get(identityId);
-    const result = this.runtime.stop(manifest);
+    const result = this.supervisor?.stop(manifest) ?? this.runtime.stop(manifest);
     this.log('stopIdentity', identityId, result.ok, result.error?.code, result.error?.message);
     return { ok: result.ok, identity: this.toConsoleIdentity(manifest, result.error), error: result.error };
   }
@@ -158,15 +167,13 @@ export class IdentityConsoleService {
     if (existing.some((item) => item.identityId === manifest.identityId)) throw new Error('IDENTITY_ID_DUPLICATE');
     const profilePath = this.normalizePath(manifest.browser.userDataDir);
     if (existing.some((item) => this.normalizePath(item.browser.userDataDir) === profilePath)) throw new Error('PROFILE_PATH_DUPLICATE');
-    const proxyHost = manifest.proxy.host.toLowerCase();
-    if (existing.some((item) => item.proxy.host.toLowerCase() === proxyHost && item.proxy.port === manifest.proxy.port)) throw new Error('PROXY_ENDPOINT_DUPLICATE');
   }
 
   private normalizePath(path: string): string {
     return path.replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase();
   }
 
-  private toConsoleIdentity(manifest: IdentityManifest, operationError?: ConsoleError): ConsoleIdentity {
+  private toConsoleIdentity(manifest: IdentityManifest, operationError?: ConsoleError, snapshot?: ManagedSessionSnapshot): ConsoleIdentity {
     const runtime = this.runtime.status(manifest);
     const network = readNetworkIdentityRecord(this.runtimeRoot, manifest.identityId);
     const frozen = network?.state === 'frozen';
@@ -186,7 +193,8 @@ export class IdentityConsoleService {
                   ? 'warning'
                   : 'unverified';
     const lastError = operationError ?? (runtime.message ? { code: runtime.state.toUpperCase(), message: runtime.message } : undefined);
-    return { manifest, status, runtime, publicIp: network?.publicIp, frozen, lastError };
+    const session = snapshot ?? this.supervisor?.status(manifest);
+    return { manifest, status, runtime, publicIp: network?.publicIp, frozen, session, lastError };
   }
 
   private log(operation: string, identityId: string | undefined, ok: boolean, errorCode?: string, errorMessage?: string): void {

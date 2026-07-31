@@ -34,6 +34,13 @@ export interface IdentityConsoleItem {
   };
   publicIp?: string;
   frozen: boolean;
+  session?: {
+    runtimeSessionId?: string;
+    process: { state: string; alive: boolean; pid?: number };
+    effectiveState: string;
+    bridge: { privateDiscoveryPresent: boolean; publicSessionPresent: boolean; extensionHandshake: boolean };
+    devtools: { ready: boolean; port?: number };
+  };
   lastError?: IdentityConsoleError;
 }
 
