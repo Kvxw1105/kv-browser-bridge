@@ -154,6 +154,48 @@ export function install(extensionId: string, deps: { fs?: InstallerFs; runner?: 
   tryApplyWindowsAcl();
 }
 
+export function repairInstall(extensionId: string, deps: { fs?: InstallerFs; runner?: RegistryRunner; appDataDir?: string; distDir?: string; nodePath?: string } = {}): string {
+  if (platform() !== 'win32' && deps.appDataDir === undefined) throw new Error('This installer currently supports Windows only.');
+  const fs = deps.fs ?? realFs;
+  const runner = deps.runner ?? defaultRegistryRunner;
+  const paths = pathsForInstall(deps);
+  validateBridgePath(paths.bridge);
+  if (!fs.existsSync(paths.bridge)) throw new Error(`Bridge build is missing: ${paths.bridge}`);
+  const currentManifest = artifactContents(fs, paths.manifest);
+  const currentParsed = readJson(fs, paths.manifest);
+  if (currentManifest !== undefined && !isValidNativeHostManifest(currentParsed)) {
+    throw new Error('Refusing to repair a non-Kv Native Messaging registration.');
+  }
+  const previousWrapper = artifactContents(fs, paths.wrapper);
+  const previousRegistry = readRegistrySnapshot(runner, 'repair snapshot');
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const backupPath = join(deps.appDataDir ?? appData(), 'KvBrowserBridge', 'repair-backups', stamp);
+  fs.mkdirSync(backupPath, { recursive: true });
+  if (currentManifest !== undefined) atomicWriteFile(fs, join(backupPath, 'native-host.json'), currentManifest);
+  if (previousWrapper !== undefined) atomicWriteFile(fs, join(backupPath, 'native-host.cmd'), previousWrapper);
+  atomicWriteFile(fs, join(backupPath, 'registry.json'), JSON.stringify(previousRegistry, null, 2) + '\n');
+
+  const wrapper = createKvWrapper(paths.bridge, deps.nodePath ?? process.execPath);
+  const manifestContents = `${JSON.stringify(createNativeHostManifest(extensionId, paths.wrapper), null, 2)}\n`;
+  try {
+    fs.mkdirSync(dirname(paths.manifest), { recursive: true });
+    atomicWriteFile(fs, paths.wrapper, wrapper);
+    atomicWriteFile(fs, paths.manifest, manifestContents);
+    requireRegistry(runner, 'repair add', ['add', registryKey, '/ve', '/t', 'REG_SZ', '/d', paths.manifest, '/f']);
+    const registeredPath = registryValue(requireRegistry(runner, 'repair verification query', ['query', registryKey, '/ve']));
+    if (artifactContents(fs, paths.manifest) !== manifestContents || artifactContents(fs, paths.wrapper) !== wrapper || registeredPath !== paths.manifest) {
+      throw new Error('Repair consistency verification failed.');
+    }
+  } catch (error) {
+    restoreArtifact(fs, paths.manifest, currentManifest, manifestContents);
+    restoreArtifact(fs, paths.wrapper, previousWrapper, wrapper);
+    restoreRegistryIfUnchanged(runner, previousRegistry, paths.manifest);
+    throw error;
+  }
+  tryApplyWindowsAcl();
+  return backupPath;
+}
+
 export function uninstall(deps: { fs?: InstallerFs; runner?: RegistryRunner; appDataDir?: string; distDir?: string; nodePath?: string } = {}): void {
   const fs = deps.fs ?? realFs;
   const runner = deps.runner ?? defaultRegistryRunner;
@@ -268,6 +310,9 @@ function main(): void {
   if (command.command === 'install') {
     install(command.extensionId);
     process.stdout.write(`Kv Browser Bridge registered for ${command.extensionId}. Reload the extension or restart Chrome.\n`);
+  } else if (command.command === 'repair') {
+    const backupPath = repairInstall(command.extensionId);
+    process.stdout.write(`Kv Browser Bridge repaired for ${command.extensionId}. Backup: ${backupPath}. Reload the extension or restart Chrome.\n`);
   } else if (command.command === 'uninstall') {
     uninstall();
     process.stdout.write('Kv Browser Bridge registration removed when it was Kv-owned.\n');

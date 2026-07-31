@@ -5,6 +5,7 @@ export const LEGACY_NATIVE_HOST_NAME = 'com.claude_code_browser';
 
 export type InstallerCommand =
   | { command: 'install'; extensionId: string }
+  | { command: 'repair'; extensionId: string }
   | { command: 'test-install'; extensionId: string }
   | { command: 'test-restore' }
   | { command: 'uninstall' }
@@ -27,8 +28,8 @@ export function parseInstallerArgs(args: string[]): InstallerCommand {
     }
     return { command, json: value === '--json' };
   }
-  if (extra.length > 0 || (command !== 'install' && command !== 'uninstall' && command !== 'test-install' && command !== 'test-restore')) {
-    throw new Error('Usage: kv-browser-bridge-install install <extension-id> | test-install <extension-id> | test-restore | uninstall | doctor [--json]');
+  if (extra.length > 0 || (command !== 'install' && command !== 'repair' && command !== 'uninstall' && command !== 'test-install' && command !== 'test-restore')) {
+    throw new Error('Usage: kv-browser-bridge-install install <extension-id> | repair <extension-id> | test-install <extension-id> | test-restore | uninstall | doctor [--json]');
   }
   if (command === 'uninstall' || command === 'test-restore') {
     if (value !== undefined) throw new Error('Usage: kv-browser-bridge-install install <extension-id> | uninstall | doctor [--json]');

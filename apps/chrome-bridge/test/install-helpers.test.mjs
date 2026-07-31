@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import {
   KV_NATIVE_HOST_NAME,
@@ -11,6 +12,12 @@ import {
 } from '../dist/install-helpers.js';
 
 const EXTENSION_ID = 'abcdefghijklmnopabcdefghijklmnop';
+
+test('extension manifest carries a stable public key for a persistent ID', () => {
+  const manifest = JSON.parse(readFileSync(new URL('../../extension/manifest.json', import.meta.url), 'utf8'));
+  assert.equal(typeof manifest.key, 'string');
+  assert.ok(manifest.key.length > 300);
+});
 
 test('builds a Kv-only native host manifest', () => {
   const manifest = createNativeHostManifest(EXTENSION_ID, 'C:\\bridge\\io.kv.browser_bridge.cmd');
@@ -26,6 +33,7 @@ test('builds a Kv-only native host manifest', () => {
 
 test('requires an explicit, valid extension ID for installation', () => {
   assert.deepEqual(parseInstallerArgs(['install', EXTENSION_ID]), { command: 'install', extensionId: EXTENSION_ID });
+  assert.deepEqual(parseInstallerArgs(['repair', EXTENSION_ID]), { command: 'repair', extensionId: EXTENSION_ID });
   assert.deepEqual(parseInstallerArgs(['test-install', EXTENSION_ID]), { command: 'test-install', extensionId: EXTENSION_ID });
   assert.deepEqual(parseInstallerArgs(['test-restore']), { command: 'test-restore' });
   assert.throws(() => parseInstallerArgs([]), /extension ID is required/);
