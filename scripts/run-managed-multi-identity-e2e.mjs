@@ -36,6 +36,10 @@ const install = spawnSync(process.execPath, [join(repo, 'apps/chrome-bridge/dist
 writeFileSync(join(root, 'native-host-install.log'), `${install.stdout ?? ''}${install.stderr ?? ''}`, 'utf8');
 if (install.status !== 0) return fail('NATIVE_HOST_INSTALL_FAILED', 'Native Messaging Host installation failed.');
 
+// Keep installation compatible with the user's existing Kv-owned registry
+// state, then isolate all managed Chrome/Bridge artifacts for this run.
+if (process.env.MANAGED_E2E_LOCALAPPDATA) process.env.LOCALAPPDATA = resolve(process.env.MANAGED_E2E_LOCALAPPDATA);
+
 const manifests = Object.fromEntries(ids.map((id) => [id, createManifest(id)]));
 const adapter = new ChromePipeProcessAdapter();
 const runtime = new IdentityRuntime(runtimeRoot, adapter);
@@ -74,8 +78,11 @@ try {
   writeReport();
   if (!report.ok) process.exitCode = 1;
 } catch (error) {
-  for (const id of ids) { try { supervisor.stop(manifests[id]); } catch { /* best effort cleanup */ } }
   fail('E2E_FAILED', error instanceof Error ? error.message : String(error));
+} finally {
+  if (!report.ok) {
+    for (const id of ids) { try { supervisor.stop(manifests[id]); } catch { /* best effort cleanup */ } }
+  }
 }
 }
 
