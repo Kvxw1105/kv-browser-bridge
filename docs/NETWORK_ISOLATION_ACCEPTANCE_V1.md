@@ -1,175 +1,193 @@
 # Network Isolation Acceptance V1
 
-This acceptance plan verifies that one browser identity is bound to one observed network egress and fails closed when the binding becomes unsafe.
+This document defines real-network qualification for managed identities. It
+does not redefine the already-accepted managed session lifecycle in PR #10.
 
-## Security objective
+## Accepted baseline
 
-For every configured identity:
+The following are implemented and covered by the Managed Multi-Identity Alpha
+acceptance:
 
-1. its Chrome profile and runtime session are unique;
-2. its assigned proxy endpoint is reachable before Chrome starts;
-3. the public IP is observed from inside that exact Chrome runtime;
-4. the observation belongs to the current `runtimeSessionId`;
-5. the public IP does not drift from the identity baseline;
-6. no other recent identity uses the same public IP;
-7. WebRTC is restricted to `disable_non_proxied_udp` by the extension bootstrap;
-8. browser-side DNS, WebRTC, and IPv6 evidence is collected and evaluated;
-9. unsafe or unverified identities are stopped and frozen;
-10. baseline reset is explicit, offline, and archived.
+- two independent managed Chrome profiles can run concurrently;
+- each runtime has its own lock, receipt, `runtimeSessionId`, Bridge discovery,
+  and Extension identity handshake;
+- MCP identity selection routes browser actions to the selected session;
+- stopping A preserves B, and restarting A preserves its Profile while issuing
+  a new runtime session;
+- managed Profile Extension provisioning, Native Host installation, and the
+  identity-bound handshake are complete.
 
-This reduces accidental shared-network exposure and account crossover. It does not guarantee acceptance by any platform and does not spoof device fingerprints or bypass platform rules.
+Real-network qualification starts after those lifecycle checks pass.
 
-## Automated acceptance
+## Policy contract
 
-Run from repository root on Windows PowerShell:
+Network probes observe and compare evidence. `network-enforcement.ts` is the
+policy decision point for managed-session actions. Probe failure must not stop
+an Attached Mode browser, and probe modules must not apply lifecycle actions
+directly.
 
-```powershell
-npm ci
-npm run test:local-chrome
-npm run check:local-chrome
-npm run package
-```
+### Observe Mode
 
-Expected result: every command exits with code 0.
+Observe is the default managed-session policy:
 
-For two or more real identities, run the full acceptance script:
+- duplicate proxy endpoints are allowed;
+- duplicate public egress is allowed and may produce `WARNING`;
+- missing DNS evidence is `UNVERIFIED` and does not stop a session;
+- `host:mdns` and `mdns` are not real WebRTC IP leaks;
+- public-egress drift is a warning;
+- observed IPv6 is a warning unless Strict policy is enabled;
+- Process State, Bridge Readiness, Network Assessment, and Effective Session
+  State remain separate in output;
+- the browser and Bridge remain running after an observation warning.
 
-```powershell
-.\scripts\accept-network-isolation.ps1 `
-  -Manifest .\identities\account-a.json, .\identities\account-b.json `
-  -StopAfter
-```
+Observe output for each identity must include proxy preflight, observed public
+IP, baseline comparison, DNS status/resolvers, normalized WebRTC observations,
+IPv6 status, warnings, process state, and Bridge readiness.
 
-The script builds and tests the runtime, validates each manifest, checks each proxy, launches each identity, verifies public egress, runs DNS/WebRTC/IPv6 acceptance, checks cross-identity public-IP uniqueness, writes `network-isolation-acceptance.json`, and stops identities on failure.
+### Strict Mode
 
-## Required manifest verification settings
+Strict must be explicitly enabled by the caller. It may apply a hard action only
+for configured failures:
 
-A strict identity should include:
+- an explicit expected public-egress mismatch may stop or freeze the session;
+- a real IPv6 observation while IPv6 is disabled may stop or freeze the session;
+- a real WebRTC IP outside the configured allow-list is a hard failure;
+- DNS absence remains `UNVERIFIED` and is never a hard failure by itself;
+- an unexpected DNS resolver is recorded as `DNS_ROUTE_MISMATCH`; stopping is
+  decided by the explicit Strict policy, not by the probe module;
+- public-egress uniqueness is a hard requirement only when explicitly enabled.
 
-```json
-{
-  "policies": {
-    "webrtc": "proxy-only",
-    "dns": "proxy",
-    "ipv6": "disabled",
-    "allowConcurrentSessions": false
-  },
-  "networkVerification": {
-    "publicIpProbeUrl": "https://api.ipify.org?format=json",
-    "ipv6ProbeUrl": "https://api6.ipify.org?format=json",
-    "dnsProbeUrl": "https://YOUR-DNS-PROBE.example/result",
-    "expectedDnsResolvers": ["YOUR_EXPECTED_DNS_RESOLVER_IP"],
-    "allowedWebrtcCandidates": [],
-    "timeoutMs": 20000
-  }
-}
-```
+The hard action must clean the matching lock, receipt, public registry record,
+and private Bridge discovery without changing another identity.
 
-Probe URLs must use HTTPS. A DNS probe service must return either an array of resolver IPs, an object shaped as `{ "dnsResolvers": [...] }`, or comma/newline-separated resolver IPs. Missing evidence remains `unverified` and fails closed.
+## Real environment preparation
 
-## Identity-level acceptance
+Use the ignored directory `local/e2e-real-network-qualification` for all
+qualification artifacts. Record only redacted metadata:
 
-For each manifest:
+- Clash/Mihomo implementation and version;
+- a redacted local configuration identifier, not the file contents;
+- each real listening inbound's protocol, host, and port;
+- the expected outbound label for each inbound;
+- whether authentication is configured;
+- Chrome and KV Extension versions.
 
-```powershell
-node apps/chrome-bridge/dist/identity-cli.js check .\identities\account-a.json
-node apps/chrome-bridge/dist/identity-cli.js proxy-check .\identities\account-a.json
-node apps/chrome-bridge/dist/identity-cli.js start .\identities\account-a.json
-node apps/chrome-bridge/dist/identity-cli.js network-leak-check .\identities\account-a.json
-node apps/chrome-bridge/dist/identity-cli.js network-status .\identities\account-a.json
-node apps/chrome-bridge/dist/identity-cli.js doctor .\identities\account-a.json
-```
+Never record proxy usernames/passwords, subscription URLs, bearer tokens,
+cookies, account data, complete Clash configuration, or complete Profile
+contents/paths.
+
+If only one real inbound exists, run the single-inbound Observe matrix and set
+the distinct-outbound result to `EXTERNAL_ENVIRONMENT_PENDING`. Do not invent a
+second inbound, outbound, public IP, DNS result, or account.
+
+## Single-inbound Observe acceptance
+
+For each real identity:
+
+1. run proxy preflight;
+2. start the managed session and wait for Bridge readiness;
+3. record browser-observed public IP against the current `runtimeSessionId`;
+4. run the configured HTTPS DNS, IPv6, and WebRTC probes;
+5. record the composite Process/Bridge/Network snapshot;
+6. keep the session running for warnings and `UNVERIFIED` observations;
+7. stop it and verify only its own runtime artifacts are removed.
 
 Pass conditions:
 
-- `check.healthy` is true;
-- proxy preflight reports `ok: true`;
-- start reports `ok: true` and a non-empty `runtimeSessionId`;
-- network status is `verified`;
-- network record `runtimeSessionId` equals the running Bridge identity session;
-- `network-leak-acceptance.json` has `ready: true`;
-- DNS, WebRTC, and IPv6 checks satisfy the manifest contract;
-- doctor reports the browser runtime ready.
+- the public-IP observation belongs to the current runtime session;
+- DNS absence is `UNVERIFIED`, not a stop;
+- mDNS-only WebRTC is `PASS` or `INFO`;
+- duplicate proxy endpoint or public IP is a warning only;
+- no other managed identity is stopped or modified.
 
-## Collision test
+## Dual-inbound qualification
 
-Configure identity A and identity B to resolve through the same actual public IP, even if their local Clash ports are different.
+When two real stable outbounds are available, configure A and B with their
+respective inbounds and run at least three complete rounds:
 
-Start A, then start B.
+`Start A -> Bridge ready -> public IP -> DNS/IPv6/WebRTC -> Start B -> Bridge ready -> public IP -> DNS/IPv6/WebRTC`
 
-Expected result:
+Verify in every round:
 
-- B start fails closed;
-- B browser is stopped;
-- A and B network records are both `frozen`;
-- both records include `NETWORK_IDENTITY_COLLISION`;
-- each record names the other identity in `collisionWith`.
+- A and B have distinct `runtimeSessionId` values;
+- Browser and Bridge sessions never cross-route;
+- each observation is tied to its own current runtime session;
+- Stop A leaves B usable;
+- Restart A issues a new session ID and retains A's Profile;
+- changing A's route does not change B;
+- restarting Clash/Mihomo and repeating the matrix does not reuse stale
+  `verified` state for a new runtime session;
+- KV starts and operates without depending on a Clash/Mihomo private API.
 
-## Drift test
+If product policy requires distinct public egress, explicitly enable
+`uniquePublicEgress=true`; otherwise record equal egress as a warning.
 
-1. Start identity A and establish its baseline.
-2. Stop A.
-3. Change the Clash route behind A to a different public IP.
-4. Start A again.
+## Strict acceptance matrix
 
-Expected result:
+Run these cases only with an explicit Strict policy:
 
-- start fails closed;
-- browser is stopped;
-- network record is `frozen`;
-- reasons include `NETWORK_EGRESS_DRIFT`.
+| Case | Expected result |
+| --- | --- |
+| expected public IP matches | `PASS`; session remains running |
+| expected public IP mismatches | `PUBLIC_EGRESS_MISMATCH`; configured hard action; own artifacts cleaned |
+| IPv6 disabled, no IPv6 observed | `PASS` |
+| IPv6 disabled, real IPv6 observed | `IPV6_LEAK_DETECTED`; configured hard action |
+| WebRTC has only `host:mdns`/`mdns` | no leak failure |
+| WebRTC has real unallowed IP | `WEBRTC_LEAK_DETECTED`; configured hard action |
+| DNS probe has no resolver evidence | `DNS_UNVERIFIED`; session is not stopped for that reason |
+| DNS probe returns unexpected resolver | `DNS_ROUTE_MISMATCH`; action comes from Strict policy |
 
-## Stale-session and MCP gate test
+## Authenticated proxy boundary
 
-1. Start A and verify its network.
-2. Stop A.
-3. Start A again with a new runtime session.
-4. Before the new observation is written, attempt an Agent browser operation.
+If a real authenticated proxy is available, verify that credentials never enter
+Chrome arguments, logs, receipts, or reports, and that invalid credentials
+produce a structured failure through the Native Credential Adapter.
 
-Expected result: the guarded MCP entrypoint rejects the operation with a network guard error. The connection-status diagnostic remains available so the operator can inspect the reason.
+Without real credentials, record:
 
-## WebRTC protection test
+`AUTHENTICATED_PROXY_ACCEPTANCE=PENDING_EXTERNAL_CREDENTIAL`
 
-Build and install the extension, then inspect the extension service worker log. It must report the requested policy as `disable_non_proxied_udp`. Run `network-leak-check`; any ICE candidate outside the configured allow-list causes `WEBRTC_LEAK_DETECTED` and stops the identity.
+This does not block qualification of an unauthenticated Clash/Mihomo inbound.
 
-## DNS and IPv6 test
+## Evidence report
 
-Run `network-leak-check` with configured HTTPS probe URLs.
+Write only to the ignored directory:
 
-Expected result:
+- `local/e2e-real-network-qualification/report.json`
+- `local/e2e-real-network-qualification/report.md`
 
-- resolver IPs outside `expectedDnsResolvers` cause `DNS_ROUTE_MISMATCH`;
-- missing DNS evidence causes `DNS_UNVERIFIED`;
-- an observed IPv6 address while policy is `disabled` causes `IPV6_LEAK_DETECTED`;
-- missing IPv6 evidence while policy is `disabled` causes `IPV6_UNVERIFIED`;
-- any failed or unverified mandatory check stops the identity browser.
+The report must include `schemaVersion`, mode, Chrome/Clash versions, run
+count, round timestamps, redacted identity/inbound/outbound identifiers,
+runtime session IDs, observed public IPs, DNS/WebRTC/IPv6 statuses and
+normalized observations, network assessment, enforcement action, process
+continue/stop result, result status (`PASS`, `FAIL`, `UNVERIFIED`, or
+`PENDING_EXTERNAL`), and failure reason codes.
 
-## Reset test
+It must not contain credentials or page-sensitive data, and all real evidence
+must remain Git ignored.
 
-While A is running:
+## Code-change boundary
 
-```powershell
-node apps/chrome-bridge/dist/identity-cli.js network-reset .\identities\account-a.json --confirm
-```
+If the qualification passes, produce local evidence only and do not change
+runtime code. Do not weaken probes or fill missing evidence with fabricated
+values.
 
-Expected result: reset is refused.
+If a reproducible runtime defect is found, record the minimal reproduction,
+create `fix/real-network-qualification-v01` from the PR #10 HEAD, and use a
+new Draft stacked PR. Do not expand PR #10 after the acceptance-contract
+documentation commit.
 
-After A is stopped, run the command again.
+## Completion states
 
-Expected result:
+`ACHIEVED` requires the Observe/Strict contract, at least one real-inbound
+Observe run, correct session binding, separate DNS/WebRTC/IPv6 results,
+mDNS-only acceptance, DNS-unverified non-stopping behavior, Strict hard-action
+behavior, isolated Stop/Restart behavior, a redacted ignored report, and no
+fabricated network results.
 
-- the current baseline is moved into `network/history`;
-- no history file is overwritten;
-- the next start establishes a new baseline.
+The following may remain `PENDING_EXTERNAL` without being a code blocker:
 
-## Remaining real-environment acceptance
-
-The following cannot be proven by repository CI and must be run on the target Windows machine:
-
-- real Clash/Mihomo multi-inbound mapping, with one inbound mapped to one stable outbound;
-- verification that every configured inbound produces a distinct public IP;
-- extension and Native Host installation in the actual Chrome profiles;
-- authenticated proxy support, if the selected provider requires credentials;
-- normal platform login and ordinary human use without cross-account session contamination.
-
-Record identity ID, runtime session ID, timestamp, public IP, DNS result, WebRTC result, IPv6 result, Clash inbound, Clash outbound, and test operator for every production acceptance run.
+- no second real proxy inbound or no two distinct stable outbounds;
+- no authenticated proxy credentials;
+- DNS service cannot provide resolver evidence;
+- real platform account acceptance has not been manually performed.
