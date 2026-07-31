@@ -40,7 +40,13 @@ async function marker(identityId) {
   await call('browser_select_identity', { identityId });
   const markerUrl = `data:text/plain,${identityId}-marker`;
   await call('browser_new_tab', { url: markerUrl, activate: true });
-  const tabs = await call('browser_get_tabs');
+  const deadline = Date.now() + 5_000;
+  let tabs = [];
+  do {
+    tabs = await call('browser_get_tabs');
+    if (tabs.some((tab) => String(tab.url ?? '').includes(`${identityId}-marker`))) break;
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  } while (Date.now() < deadline);
   assert(tabs.some((tab) => String(tab.url ?? '').includes(`${identityId}-marker`)), `Marker was not routed to ${identityId}.`);
   return tabs.map((tab) => String(tab.url ?? ''));
 }
