@@ -27,6 +27,27 @@ async function fixture() {
   return { env, root };
 }
 
+async function dualFixture() {
+  const localAppData = await mkdtemp(join(tmpdir(), 'kv-identity-registry-dual-'));
+  const env = { LOCALAPPDATA: localAppData };
+  const root = join(localAppData, 'KvBrowserBridge');
+  await mkdir(join(root, 'sessions'), { recursive: true });
+  for (const [identityId, pid] of [['identity-a', process.pid], ['identity-b', process.pid + 1]]) {
+    await mkdir(join(root, 'identities', identityId), { recursive: true });
+    await writeFile(join(root, 'sessions', `${identityId}.json`), JSON.stringify({ schemaVersion: 1, identity: { identityId, workspaceId: 'alpha', platform: 'windows', runtimeSessionId: `run-${identityId}` }, pid, startedAt: '2026-07-29T00:00:00.000Z', protocolVersion: 1 }));
+    await writeFile(join(root, 'identities', identityId, 'bridge.json'), JSON.stringify({ token: `private-${identityId}` }));
+  }
+  return { env };
+}
+
+test('lists two selectable sessions without crossing identity metadata', async () => {
+  const { env } = await dualFixture();
+  const sessions = await listIdentitySessions(env);
+  assert.deepEqual(sessions.map((session) => session.identity.identityId), ['identity-a', 'identity-b']);
+  assert.deepEqual(sessions.map((session) => session.identity.runtimeSessionId), ['run-identity-a', 'run-identity-b']);
+  assert.equal(JSON.stringify(sessions).includes('private-'), false);
+});
+
 test('lists public identity sessions without reading private bridge credentials', async () => {
   const { env } = await fixture();
   const sessions = await listIdentitySessions(env);

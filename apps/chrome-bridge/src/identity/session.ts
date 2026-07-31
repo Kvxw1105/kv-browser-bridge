@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
 import type { IdentityManifest, RuntimeReceipt, RuntimeStatus } from './model.js';
 import { buildLaunchPlan } from './launch-plan.js';
 import { IdentityLockError, IdentityLockManager, SystemProcessLiveness } from './lock.js';
@@ -64,6 +65,9 @@ export class IdentityRuntime {
     let browserPid: number | undefined;
     try {
       mkdirSync(manifest.browser.userDataDir, { recursive: true, mode: 0o700 });
+      // Chrome can leave DevToolsActivePort behind after an abrupt stop. It is
+      // a per-process signal and must never be reused by a new runtime session.
+      rmSync(join(manifest.browser.userDataDir, 'DevToolsActivePort'), { force: true });
       const lock = this.locks.acquire(manifest.identityId, manifest.browser.userDataDir);
       lockId = lock.lockId;
       const pid = this.processes.spawn(plan);
@@ -116,6 +120,7 @@ export class IdentityRuntime {
       }
       if (alive) this.processes.terminate(receipt.pid);
       if (lock && lock.lockId === receipt.lockId) this.locks.release(manifest.identityId, receipt.lockId);
+      rmSync(join(manifest.browser.userDataDir, 'DevToolsActivePort'), { force: true });
       const stopped: RuntimeReceipt = { ...receipt, state: 'stopped', stoppedAt: this.now().toISOString(), updatedAt: this.now().toISOString() };
       this.receipts.save(stopped);
       return { ok: true, receipt: stopped };

@@ -14,9 +14,9 @@ import { IdentityRuntime } from './identity/session.js';
 import { acceptanceReportPath, runIdentityDoctor } from './identity/windows-doctor.js';
 
 const [command, manifestArgument, confirmation] = process.argv.slice(2);
-const commands = ['check', 'plan', 'proxy-check', 'network-check', 'network-leak-check', 'network-status', 'network-reset', 'start', 'stop', 'status', 'doctor', 'acceptance'];
+const commands = ['check', 'plan', 'proxy-check', 'network-check', 'network-leak-check', 'network-status', 'network-reset', 'start', 'start-process', 'stop', 'status', 'doctor', 'acceptance'];
 if (!command || !manifestArgument || !commands.includes(command)) {
-  console.error('Usage: node dist/identity-cli.js <check|plan|proxy-check|network-check|network-leak-check|network-status|network-reset|start|stop|status|doctor|acceptance> <identity-manifest.json> [--confirm]');
+  console.error('Usage: node dist/identity-cli.js <check|plan|proxy-check|network-check|network-leak-check|network-status|network-reset|start|start-process|stop|status|doctor|acceptance> <identity-manifest.json> [--confirm]');
   process.exit(2);
 }
 
@@ -29,6 +29,7 @@ async function main(): Promise<void> {
   if (command === 'check') result = validateManifest(manifest);
   else if (command === 'plan') result = buildLaunchPlan(manifest);
   else if (command === 'proxy-check') result = await probeProxyEndpoint(manifest);
+  else if (command === 'start-process') result = await runtime.startVerified(manifest);
   else if (command === 'start') {
     const started = await runtime.startVerified(manifest);
     if (!started.ok) result = started;

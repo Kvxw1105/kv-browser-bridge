@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -121,4 +121,40 @@ test('refuses to terminate a live PID when lock ownership does not match receipt
   assert.equal(stopped.ok, false);
   assert.equal(stopped.error.code, 'STOP_OWNERSHIP_MISMATCH');
   assert.equal(fake.alive.has(started.receipt.pid), true);
+});
+
+test('managed launch can opt into an explicit extension path without changing the default', () => {
+  const root = mkdtempSync(join(tmpdir(), 'kv-extension-plan-'));
+  const base = manifest(root);
+  const defaultPlan = buildLaunchPlan(base, {});
+  assert.equal(defaultPlan.args.some((arg) => arg.startsWith('--load-extension=')), false);
+  const extensionPath = join(root, 'extension');
+  mkdirSync(extensionPath, { recursive: true });
+  const managedPlan = buildLaunchPlan(base, { KV_BROWSER_EXTENSION_PATH: extensionPath });
+  assert.equal(managedPlan.args.includes(`--load-extension=${extensionPath}`), true);
+});
+
+test('runs two managed identities independently and preserves B while restarting A', () => {
+  const root = mkdtempSync(join(tmpdir(), 'kv-id-dual-'));
+  const fake = new FakeProcesses();
+  let sessionNumber = 0;
+  const runtime = new IdentityRuntime(root, fake, () => new Date('2026-07-28T12:00:00Z'), undefined, () => `runtime-session-${++sessionNumber}`);
+  const a = manifest(root, { identityId: 'identity-a', browser: { executablePath: process.execPath, userDataDir: join(root, 'profile-a') } });
+  const b = manifest(root, { identityId: 'identity-b', browser: { executablePath: process.execPath, userDataDir: join(root, 'profile-b') } });
+  const startedA = runtime.start(a);
+  const startedB = runtime.start(b);
+  assert.equal(startedA.ok, true);
+  assert.equal(startedB.ok, true);
+  assert.notEqual(startedA.receipt.runtimeSessionId, startedB.receipt.runtimeSessionId);
+  assert.notEqual(startedA.receipt.pid, startedB.receipt.pid);
+  assert.equal(runtime.status(b).alive, true);
+  assert.equal(runtime.stop(a).ok, true);
+  assert.equal(runtime.status(a).alive, false);
+  assert.equal(runtime.status(b).alive, true);
+  const restartedA = runtime.start(a);
+  assert.equal(restartedA.ok, true);
+  assert.notEqual(restartedA.receipt.runtimeSessionId, startedA.receipt.runtimeSessionId);
+  assert.equal(runtime.status(b).alive, true);
+  assert.equal(runtime.stop(a).ok, true);
+  assert.equal(runtime.stop(b).ok, true);
 });

@@ -1,4 +1,4 @@
-import { isAbsolute } from 'node:path';
+import { basename, isAbsolute } from 'node:path';
 
 export const KV_NATIVE_HOST_NAME = 'io.kv.browser_bridge';
 export const LEGACY_NATIVE_HOST_NAME = 'com.claude_code_browser';
@@ -52,7 +52,9 @@ export function validateBridgePath(bridgePath: string): string {
 export function createKvWrapper(bridgePath: string, nodePath: string): string {
   validateBridgePath(bridgePath);
   if (!nodePath) throw new Error('Node runtime path is required.');
-  return `@echo off\r\nREM Kv Browser Bridge wrapper - managed by Kv\r\n"${nodePath}" "${bridgePath}" %*\r\n`;
+  // Resolve the bridge relative to this wrapper. This keeps cmd.exe from
+  // reparsing a repository path that may contain non-ASCII directory names.
+  return `@echo off\r\nREM Kv Browser Bridge wrapper - managed by Kv\r\n"${nodePath}" "%~dp0${basename(bridgePath)}" %*\r\n`;
 }
 
 export function isKvOwnedWrapper(contents: string): boolean {

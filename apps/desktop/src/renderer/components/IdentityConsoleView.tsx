@@ -113,6 +113,9 @@ export function IdentityConsoleView({ onBack, onEdit, onCreate }: IdentityConsol
                   <div><dt>Proxy</dt><dd>{identity.manifest.proxy.protocol}://{identity.manifest.proxy.host}:{identity.manifest.proxy.port}</dd></div>
                   <div><dt>Profile</dt><dd title={identity.manifest.browser.userDataDir}>{identity.manifest.browser.userDataDir}</dd></div>
                   <div><dt>Public IP</dt><dd>{identity.publicIp ?? 'Not verified'}</dd></div>
+                  <div><dt>Process</dt><dd>{identity.session?.process.state ?? identity.runtime.state}</dd></div>
+                  <div><dt>Bridge</dt><dd>{identity.session?.bridge.extensionHandshake ? 'Handshake ready' : identity.session?.bridge.privateDiscoveryPresent ? 'Discovery only' : 'Not ready'}</dd></div>
+                  <div><dt>Network</dt><dd>{identity.session?.effectiveState === 'warning' ? 'Warning' : identity.frozen ? 'Frozen' : identity.publicIp ? 'Observed' : 'Unverified'}</dd></div>
                   <div><dt>PID</dt><dd>{identity.runtime.alive ? identity.runtime.pid ?? 'Unknown' : 'Not running'}</dd></div>
                 </dl>
 

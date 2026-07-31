@@ -211,6 +211,10 @@ class ChromeBridge {
       request.reject(nativeDisconnectErrorFor(request.operationClass, error.message));
       this.pending.delete(requestId);
     }
+    // Native Messaging owns the bridge process lifetime. Once Chrome closes
+    // stdin, stop the named-pipe server as well so a managed session cannot
+    // leave an orphan host behind after its browser exits.
+    if (this.server) this.stop('native-disconnect');
   }
 
   private acceptPipeClient(socket: Socket): void {
