@@ -29,6 +29,8 @@ export function LocalBridgePanel() {
   const [locale, setLocale] = useState<Locale>('zh');
   const [theme, setTheme] = useState<Theme>('dark');
   const [coordination, setCoordination] = useState<CoordinationStatus | null>(null);
+  const [reconnecting, setReconnecting] = useState(false);
+  const [extensionVersion, setExtensionVersion] = useState('');
   const chinese = locale === 'zh';
   const text = chinese ? {
     eyebrow: '本地浏览器控制', connected: '已连接', connecting: '正在连接', disconnected: '未连接', ready: '浏览器已就绪', connectingTitle: '正在连接 Chrome', unavailable: '桥接不可用', readyBody: '当前 Chrome 登录态已可供使用。', unavailableBody: '请保持 Chrome 打开并启用扩展。', target: '当前目标', noTarget: '未选择标签页', refresh: '刷新', openPage: '打开一个页面后再打开 Kv Bridge。', noUrl: '没有可用的页面 URL', updated: '已更新', waiting: '等待页面详情', pick: '选择元素', copy: '复制标签页 ID', access: '浏览器访问', enabled: '已启用', bookmarks: '书签', bookmarksDesc: '打开已保存的目的地', downloads: '下载', downloadsDesc: '读取最近下载状态', extensions: '扩展程序', extensionsDesc: '检查已安装扩展', enable: '启用', tabs: '打开的标签页', tabsHint: '选择 Agent 工具的默认目标页。', refreshList: '刷新列表', targetTag: '目标', active: '当前', noTabs: '当前窗口没有可浏览的标签页。', recorder: '任务录制', recording: '已在标签页', events: '记录事件', recorderHint: '记录浏览器动作、目标、人工检查点和备注；当前不是视频录屏。', intentPlaceholder: '这条流程要完成什么？', start: '开始录制', stop: '停止并生成草稿', saved: '已生成草稿', steps: '个步骤', checkpoints: '个检查点', native: '本地消息', error: '录制请求失败。', dark: '深色模式', light: '浅色模式', agents: '连接中的 Agent', mode: '协调模式', leases: '资源占用', noAgents: '暂无其他 Agent 连接', noLeases: '暂无标签页占用'
@@ -66,6 +68,7 @@ export function LocalBridgePanel() {
       if (settings['kv-panel-locale'] === 'en' || settings['kv-panel-locale'] === 'zh') setLocale(settings['kv-panel-locale']);
       if (settings['kv-panel-theme'] === 'dark' || settings['kv-panel-theme'] === 'light') setTheme(settings['kv-panel-theme']);
     });
+    setExtensionVersion(chrome.runtime.getManifest().version);
     if (MY_TAB_ID != null) {
       refreshTarget();
     }
@@ -78,6 +81,7 @@ export function LocalBridgePanel() {
     port.onMessage.addListener((message: { type?: string; connected?: boolean; error?: string; status?: CoordinationStatus | null }) => {
       if (message.type === '_native_status') {
         setState(message.connected ? 'connected' : 'disconnected');
+        if (message.connected) setReconnecting(false);
         setNativeError(message.connected ? '' : message.error ?? '');
         if (!message.connected) setCoordination(null);
       }
@@ -97,6 +101,14 @@ export function LocalBridgePanel() {
   };
   const copyTarget = () => {
     if (targetTabId != null) void navigator.clipboard.writeText(String(targetTabId));
+  };
+  const requestReconnect = () => {
+    if (reconnecting) return;
+    setReconnecting(true);
+    setState('connecting');
+    setNativeError('');
+    chrome.runtime.sendMessage({ type: 'KV_BRIDGE_RECONNECT' }, () => { void chrome.runtime.lastError; });
+    window.setTimeout(() => setReconnecting(false), 8_000);
   };
   const selectTarget = (tabId: number) => {
     chrome.runtime.sendMessage({ type: 'KV_SET_TARGET_TAB', tabId }, (response?: { ok?: boolean }) => {
@@ -147,6 +159,9 @@ export function LocalBridgePanel() {
           <strong>{connected ? text.readyBody : text.unavailableBody}</strong>
           {!connected && nativeError && <small>{text.native}: {nativeError}</small>}
         </div>
+        <button className="local-bridge-panel__reconnect" onClick={requestReconnect} disabled={reconnecting}>
+          {reconnecting ? (chinese ? '正在重连…' : 'Reconnecting…') : (chinese ? '立即重连' : 'Reconnect now')}
+        </button>
       </section>
 
       <div className="local-bridge-panel__workspace">
@@ -259,7 +274,7 @@ export function LocalBridgePanel() {
       </section>
 
       <footer className="local-bridge-panel__footer">
-        <span>{text.native}</span><b aria-hidden="true" /> <span>kv-browser-bridge MCP</span>
+        <span>{text.native}</span><b aria-hidden="true" /> <span>kv-browser-bridge MCP</span><b aria-hidden="true" /><span>v{extensionVersion || '—'}</span>
       </footer>
     </main>
   );

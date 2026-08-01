@@ -110,6 +110,23 @@ function scheduleReconnect() {
   log('bridge_reconnect_scheduled', { delay, reconnectAttempt });
 }
 
+function forceReconnect(): void {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  reconnectAttempt = 0;
+  const current = nativePort;
+  nativePort = null;
+  if (heartbeatTimer) clearInterval(heartbeatTimer);
+  heartbeatTimer = null;
+  if (current) {
+    try { current.disconnect(); } catch { /* the new connection attempt is authoritative */ }
+  }
+  broadcastToPanels({ type: '_native_status', connected: false, error: 'Manual reconnect requested.' });
+  connectBridge();
+}
+
 function connectBridge(): void {
   if (nativePort) return;
   try {
@@ -178,6 +195,11 @@ chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== 'sidepanel') return;
   panelPorts.add(port);
   port.onMessage.addListener((message: { type?: string; tabId?: number } & Record<string, unknown>) => {
+    if (message.type === 'KV_BRIDGE_RECONNECT') {
+      forceReconnect();
+      try { port.postMessage({ type: '_native_status', connected: false, reconnecting: true }); } catch { /* closed */ }
+      return;
+    }
     if (message.type === '_panel_init' && typeof message.tabId === 'number') {
       // Retain selection for legacy callers that do not provide tabId. New MCP
       // requests should always select explicitly through browser_switch_tab.
