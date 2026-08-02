@@ -5,6 +5,7 @@ const HOST_NAME = 'io.kv.browser_bridge';
 const MAX_NATIVE_MESSAGE_BYTES = 480 * 1024;
 
 let nativePort: chrome.runtime.Port | null = null;
+let nativeReady = false;
 let reconnectAttempt = 0;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -39,7 +40,7 @@ function sanitizeCoordinationStatus(value: unknown): CoordinationStatus | null {
     const lease = entry as Record<string, unknown>;
     if (typeof lease.resource !== 'string' || typeof lease.purpose !== 'string' || typeof lease.expiresAt !== 'string') return [];
     if (lease.state !== 'active' && lease.state !== 'quarantined') return [];
-    return [{ resource: lease.resource, purpose: lease.purpose, state: lease.state, expiresAt: lease.expiresAt }];
+    return [{ resource: lease.resource, purpose: lease.purpose, state: lease.state as 'active' | 'quarantined', expiresAt: lease.expiresAt }];
   }) : [];
   return { mode, clients, leases };
 }
@@ -57,7 +58,8 @@ function broadcastToPanels(message: unknown): void {
 function connectionStatus() {
   return {
     extensionConnected: true,
-    bridgeConnected: nativePort != null,
+    bridgeConnected: nativePort != null && nativeReady,
+    nativeReady,
     selectedTabId: getSelectedTabId(),
     reconnectAttempt,
     panelCount: panelPorts.size,
@@ -118,6 +120,7 @@ function forceReconnect(): void {
   reconnectAttempt = 0;
   const current = nativePort;
   nativePort = null;
+  nativeReady = false;
   if (heartbeatTimer) clearInterval(heartbeatTimer);
   heartbeatTimer = null;
   if (current) {
@@ -132,11 +135,18 @@ function connectBridge(): void {
   try {
     const port = chrome.runtime.connectNative(HOST_NAME);
     nativePort = port;
+    nativeReady = false;
     reconnectAttempt = 0;
     log('bridge_connected');
-    broadcastToPanels({ type: '_native_status', connected: true });
+    broadcastToPanels({ type: '_native_status', connected: true, nativeReady: false });
 
     port.onMessage.addListener((message: { type?: string; requestId?: string; action?: string; params?: Record<string, unknown>; sessionId?: string; deadlineAt?: number; operationClass?: 'read' | 'non_idempotent_write'; domain?: string; paths?: string[]; status?: unknown }) => {
+      if (message.type === 'bridge:ready') {
+        nativeReady = true;
+        log('bridge_ready');
+        broadcastToPanels({ type: '_native_status', connected: true, nativeReady: true });
+        return;
+      }
       if (message.type === 'browser:request' && typeof message.requestId === 'string' && typeof message.action === 'string') {
         void handleBrowserRequest({ requestId: message.requestId, action: message.action, params: message.params, sessionId: message.sessionId, deadlineAt: message.deadlineAt, operationClass: message.operationClass }, connectionStatus)
           .then(postBrowserResponse)
@@ -163,11 +173,13 @@ function connectBridge(): void {
       if (nativePort !== port) return;
       const error = chrome.runtime.lastError?.message ?? 'Chrome Bridge disconnected';
       nativePort = null;
+      nativeReady = false;
       latestCoordinationStatus = null;
       if (heartbeatTimer) clearInterval(heartbeatTimer);
       heartbeatTimer = null;
       log('bridge_disconnected', { error });
-      broadcastToPanels({ type: '_native_status', connected: false, error });
+      const repairRequired = /forbidden|native messaging host|specified native messaging host|not found|cannot find|access/i.test(error);
+      broadcastToPanels({ type: '_native_status', connected: false, nativeReady: false, error, repairRequired });
       scheduleReconnect();
     });
     heartbeatTimer = setInterval(() => {
@@ -204,7 +216,7 @@ chrome.runtime.onConnect.addListener((port) => {
       // Retain selection for legacy callers that do not provide tabId. New MCP
       // requests should always select explicitly through browser_switch_tab.
       setSelectedTab(message.tabId);
-      try { port.postMessage({ type: '_native_status', connected: nativePort != null }); } catch { /* closed */ }
+      try { port.postMessage({ type: '_native_status', connected: nativePort != null, nativeReady }); } catch { /* closed */ }
       if (latestCoordinationStatus) {
         try { port.postMessage({ type: 'bridge:coordination_status', status: latestCoordinationStatus }); } catch { /* closed */ }
       }

@@ -1746,3 +1746,13 @@ body {
 .local-bridge-panel__lease--quarantined em { color: #ff7373; }
 .local-bridge-panel__coordination-empty { padding: 9px 0; color: var(--muted); font-size: 11px; }
 @media (max-width: 520px) { .local-bridge-panel__coordination-grid { grid-template-columns: 1fr; gap: 10px; } .local-bridge-panel__coordination { padding: 12px; } }
+
+.local-bridge-panel__repair { max-width: 1120px; margin: 12px auto 0; padding: 14px 16px; border: 1px solid #d77b5c; border-radius: 8px; background: rgba(88, 35, 24, .42); color: #ffe5dc; }
+.local-bridge-panel__repair-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.local-bridge-panel__repair-header p { margin: 0; color: #ffb79d; font: 700 11px "SF Mono", "Cascadia Code", monospace; text-transform: uppercase; }
+.local-bridge-panel__repair-header span { display: block; margin-top: 5px; color: #f3c7b7; font-size: 11px; line-height: 1.5; }
+.local-bridge-panel__repair-header button, .local-bridge-panel__repair-body button { flex: 0 0 auto; border: 1px solid #d77b5c; border-radius: 5px; padding: 6px 9px; background: #6a2d20; color: #ffe5dc; cursor: pointer; font-size: 11px; }
+.local-bridge-panel__repair-header button:hover, .local-bridge-panel__repair-body button:hover { background: #873c2a; }
+.local-bridge-panel__repair-body { margin-top: 12px; }
+.local-bridge-panel__repair-body pre { max-height: 220px; overflow: auto; margin: 0 0 9px; padding: 10px; border: 1px solid rgba(255, 183, 157, .25); border-radius: 5px; background: rgba(0, 0, 0, .3); color: #ffe5dc; white-space: pre-wrap; word-break: break-word; font: 11px/1.55 "SF Mono", "Cascadia Code", monospace; }
+@media (max-width: 520px) { .local-bridge-panel__repair-header { flex-direction: column; } }

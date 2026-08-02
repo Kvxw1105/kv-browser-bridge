@@ -30,6 +30,9 @@ export function LocalBridgePanel() {
   const [theme, setTheme] = useState<Theme>('dark');
   const [coordination, setCoordination] = useState<CoordinationStatus | null>(null);
   const [reconnecting, setReconnecting] = useState(false);
+  const [repairRequired, setRepairRequired] = useState(false);
+  const [repairPromptOpen, setRepairPromptOpen] = useState(false);
+  const [repairPromptCopied, setRepairPromptCopied] = useState(false);
   const [extensionVersion, setExtensionVersion] = useState('');
   const chinese = locale === 'zh';
   const text = chinese ? {
@@ -78,11 +81,20 @@ export function LocalBridgePanel() {
     const port = chrome.runtime.connect({ name: 'sidepanel' });
     void chrome.permissions.getAll().then((permissions) => setGrantedPermissions(permissions.permissions ?? []));
     if (MY_TAB_ID != null) port.postMessage({ type: '_panel_init', tabId: MY_TAB_ID });
-    port.onMessage.addListener((message: { type?: string; connected?: boolean; error?: string; status?: CoordinationStatus | null }) => {
+    port.onMessage.addListener((message: { type?: string; connected?: boolean; nativeReady?: boolean; error?: string; repairRequired?: boolean; status?: CoordinationStatus | null }) => {
       if (message.type === '_native_status') {
-        setState(message.connected ? 'connected' : 'disconnected');
-        if (message.connected) setReconnecting(false);
+        const ready = message.connected === true && message.nativeReady === true;
+        setState(ready ? 'connected' : message.connected ? 'connecting' : 'disconnected');
+        if (ready) {
+          setReconnecting(false);
+          setRepairRequired(false);
+          setRepairPromptOpen(false);
+        }
         setNativeError(message.connected ? '' : message.error ?? '');
+        if (message.repairRequired) {
+          setRepairRequired(true);
+          setRepairPromptOpen(true);
+        }
         if (!message.connected) setCoordination(null);
       }
       if (message.type === 'bridge:coordination_status') setCoordination(message.status ?? null);
@@ -102,13 +114,30 @@ export function LocalBridgePanel() {
   const copyTarget = () => {
     if (targetTabId != null) void navigator.clipboard.writeText(String(targetTabId));
   };
+
+  const repairPrompt = [
+    '\u8bf7\u4fee\u590d Kv Browser Bridge \u7684 Chrome Native Messaging \u8fde\u63a5\u3002',
+    `\u5f53\u524d\u6269\u5c55 ID\uff1a${chrome.runtime.id}`,
+    '\u5728 Kv Browser Bridge \u4ed3\u5e93\u6839\u76ee\u5f55\u6267\u884c\uff1a',
+    `node apps/chrome-bridge/dist/install.js repair ${chrome.runtime.id}`,
+    'node apps/chrome-bridge/dist/install.js doctor --json',
+    '\u786e\u8ba4 doctor \u7684 manifest\u3001registry-hkcu\u3001bridge-path \u548c log-directory \u5747\u4e3a ok\uff1b\u7136\u540e\u5728 chrome://extensions \u91cd\u65b0\u52a0\u8f7d\u8be5\u6269\u5c55\u3002',
+    '\u4e0d\u8981\u5220\u9664\u6216\u6e05\u7406 Chrome Profile\u3001Cookie\u3001LocalStorage\u3001IndexedDB\u3001\u7f13\u5b58\u6216\u767b\u5f55\u6001\u3002',
+  ].join('\n');
   const requestReconnect = () => {
     if (reconnecting) return;
     setReconnecting(true);
     setState('connecting');
     setNativeError('');
+    setRepairRequired(false);
     chrome.runtime.sendMessage({ type: 'KV_BRIDGE_RECONNECT' }, () => { void chrome.runtime.lastError; });
     window.setTimeout(() => setReconnecting(false), 8_000);
+  };
+  const copyRepairPrompt = () => {
+    void navigator.clipboard.writeText(repairPrompt).then(() => {
+      setRepairPromptCopied(true);
+      window.setTimeout(() => setRepairPromptCopied(false), 2_000);
+    });
   };
   const selectTarget = (tabId: number) => {
     chrome.runtime.sendMessage({ type: 'KV_SET_TARGET_TAB', tabId }, (response?: { ok?: boolean }) => {
@@ -163,6 +192,24 @@ export function LocalBridgePanel() {
           {reconnecting ? (chinese ? '正在重连…' : 'Reconnecting…') : (chinese ? '立即重连' : 'Reconnect now')}
         </button>
       </section>
+
+      {repairRequired && (
+        <section className="local-bridge-panel__repair" aria-labelledby="repair-heading">
+          <div className="local-bridge-panel__repair-header">
+            <div>
+              <p id="repair-heading">{chinese ? '\u8fde\u63a5\u914d\u7f6e\u9700\u8981\u4fee\u590d' : 'Connection setup needs repair'}</p>
+              <span>{chinese ? '\u5f53\u524d\u6269\u5c55\u65e0\u6743\u542f\u52a8 Native Host\uff0c\u53ef\u5c06\u4ee5\u4e0b\u6307\u5f15\u4ea4\u7ed9\u4efb\u610f\u672c\u5730 Agent\u3002' : 'The extension cannot start its Native Host. Copy these steps to any local Agent.'}</span>
+            </div>
+            <button onClick={() => setRepairPromptOpen((open) => !open)}>{repairPromptOpen ? (chinese ? '\u6536\u8d77' : 'Collapse') : (chinese ? '\u663e\u793a\u4fee\u590d\u6307\u5f15' : 'Show repair steps')}</button>
+          </div>
+          {repairPromptOpen && (
+            <div className="local-bridge-panel__repair-body">
+              <pre>{repairPrompt}</pre>
+              <button onClick={copyRepairPrompt}>{repairPromptCopied ? (chinese ? '\u5df2\u590d\u5236' : 'Copied') : (chinese ? '\u590d\u5236\u63d0\u793a\u8bcd' : 'Copy prompt')}</button>
+            </div>
+          )}
+        </section>
+      )}
 
       <div className="local-bridge-panel__workspace">
         <section className="local-bridge-panel__section local-bridge-panel__section--target" aria-labelledby="target-heading">
