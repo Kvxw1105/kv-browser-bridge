@@ -1,4 +1,5 @@
 import { app, ipcMain } from 'electron';
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -20,13 +21,49 @@ export function resolveIdentityConsoleDir(
   return appDataDir;
 }
 
+function resolveExtensionDir(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const configured = env['KV_BROWSER_EXTENSION_PATH']?.trim();
+  if (configured) return resolve(configured);
+  const packaged = process.resourcesPath ? join(process.resourcesPath, 'extension') : '';
+  if (packaged && existsSync(join(packaged, 'manifest.json'))) return packaged;
+  const repository = resolve(process.cwd(), 'apps', 'extension', 'dist');
+  if (existsSync(join(repository, 'manifest.json'))) return repository;
+  return undefined;
+}
+
+function discoverScriptPath(): string {
+  const packaged = process.resourcesPath ? join(process.resourcesPath, 'scripts', 'discover-network-runtime.ps1') : '';
+  if (packaged && existsSync(packaged)) return packaged;
+  return resolve(process.cwd(), 'scripts', 'discover-network-runtime.ps1');
+}
+
+function unpackedExtensionId(extensionPath: string): string {
+  const hash = createHash('sha256').update(extensionPath, 'utf16le').digest();
+  return [...hash.subarray(0, 16)].map((byte) => String.fromCharCode(97 + (byte >> 4), 97 + (byte & 15))).join('');
+}
+
 function getService(): IdentityConsoleService {
-  if (!service) service = new IdentityConsoleService(resolveIdentityConsoleDir());
+  if (!service) service = new IdentityConsoleService(resolveIdentityConsoleDir(), undefined, undefined, { extensionPath: resolveExtensionDir() });
   return service;
 }
 function discover(): unknown {
-  const raw = execFileSync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', resolve(process.cwd(), 'scripts', 'discover-network-runtime.ps1'), '-Compact'], { encoding: 'utf8', timeout: 30_000 });
+  const raw = execFileSync('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', discoverScriptPath(), '-Compact'], { encoding: 'utf8', timeout: 30_000 });
   return JSON.parse(raw);
+}
+function installBridge(): unknown {
+  const extensionDir = resolveExtensionDir();
+  if (!extensionDir) throw new Error('Bundled or repository extension not found.');
+  const packaged = process.resourcesPath ? join(process.resourcesPath, 'bridge') : '';
+  const installJs = packaged && existsSync(join(packaged, 'install.js'))
+    ? join(packaged, 'install.js')
+    : resolve(process.cwd(), 'apps', 'chrome-bridge', 'dist', 'install.js');
+  if (!existsSync(installJs)) throw new Error(`Native host installer not found: ${installJs}`);
+  const output = execFileSync(process.execPath, [installJs, 'install', unpackedExtensionId(extensionDir)], {
+    encoding: 'utf8',
+    timeout: 60_000,
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+  });
+  return { extensionId: unpackedExtensionId(extensionDir), installer: installJs, output: output.slice(0, 500) };
 }
 
 function errorFrom(value: unknown): { code: string; message: string } {
@@ -57,4 +94,5 @@ export function registerIdentityConsoleHandlers(): void {
   ipcMain.handle('identity:stopAll', () => safe<IdentityConsoleOperationResult[]>(() => getService().stopAll() as IdentityConsoleOperationResult[]));
   ipcMain.handle('identity:logs', () => safe<IdentityConsoleLog[]>(() => getService().listLogs() as IdentityConsoleLog[]));
   ipcMain.handle('identity:discover', () => safe(discover));
+  ipcMain.handle('identity:installBridge', () => safe(installBridge));
 }

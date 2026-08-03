@@ -16,6 +16,7 @@ export function IdentityConsoleView({ onBack, onEdit, onCreate }: IdentityConsol
   const [loading, setLoading] = useState(true);
   const [busyIdentity, setBusyIdentity] = useState<string>();
   const [error, setError] = useState<string>();
+  const [bridgeNotice, setBridgeNotice] = useState<string>();
   const [logs, setLogs] = useState<IdentityConsoleLog[]>([]);
 
   const refresh = useCallback(async () => {
@@ -59,6 +60,12 @@ export function IdentityConsoleView({ onBack, onEdit, onCreate }: IdentityConsol
   };
   const validateAll = async (): Promise<void> => { setLoading(true); try { const result = await window.identityConsole.validateAll(); if (!result.ok) setError(`${result.error?.code ?? 'VALIDATE_FAILED'}: ${result.error?.message ?? ''}`); else setError(`Validated ${result.data?.length ?? 0} identities. See operations log for details.`); } finally { setLoading(false); } };
   const stopAll = async (): Promise<void> => { setLoading(true); try { const result = await window.identityConsole.stopAll(); if (!result.ok) setError(`${result.error?.code ?? 'STOP_ALL_FAILED'}: ${result.error?.message ?? ''}`); await refresh(); } finally { setLoading(false); } };
+  const installBridge = async (): Promise<void> => {
+    setBridgeNotice(undefined);
+    const result = await window.identityConsole.installBridge();
+    if (!result.ok) setBridgeNotice(`${result.error?.code ?? 'INSTALL_BRIDGE_FAILED'}: ${result.error?.message ?? ''}`);
+    else setBridgeNotice('Native host registered. Reload the extension if a browser is already open.');
+  };
 
   return (
     <div className="identity-console">
@@ -77,12 +84,19 @@ export function IdentityConsoleView({ onBack, onEdit, onCreate }: IdentityConsol
         </button>
         <button className="identity-console__refresh-all" onClick={() => void validateAll()} disabled={loading}>Validate all</button>
         <button className="identity-console__refresh-all" onClick={() => void stopAll()} disabled={loading}>Stop all</button>
+        <button className="identity-console__refresh-all" onClick={() => void installBridge()} disabled={loading}>Install bridge</button>
       </div>
 
       {error && (
         <div className="identity-console__error">
           <CircleAlert size={15} />
           <span>{error}</span>
+        </div>
+      )}
+      {bridgeNotice && (
+        <div className="identity-console__error">
+          <CircleAlert size={15} />
+          <span>{bridgeNotice}</span>
         </div>
       )}
 

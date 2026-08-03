@@ -23,7 +23,12 @@ export class IdentityConsoleService {
   private readonly runtime: IdentityRuntime;
   private readonly supervisor?: SessionSupervisor;
 
-  constructor(private readonly localDir: string, runtimeRoot = join(localDir, 'runtime'), runtime?: IdentityRuntime) {
+  constructor(
+    private readonly localDir: string,
+    runtimeRoot = join(localDir, 'runtime'),
+    runtime?: IdentityRuntime,
+    private readonly supervisorOptions: { extensionPath?: string } = {},
+  ) {
     mkdirSync(localDir, { recursive: true, mode: 0o700 });
     this.manifestStorePath = join(localDir, 'identity-console.manifests.json');
     this.generatedManifestDir = join(localDir, 'generated-identities');
@@ -31,7 +36,7 @@ export class IdentityConsoleService {
     this.logPath = join(localDir, 'operations.json');
     this.runtimeRoot = runtimeRoot;
     this.runtime = runtime ?? new IdentityRuntime(runtimeRoot);
-    if (!runtime) this.supervisor = new SessionSupervisor(runtimeRoot, { runtime: this.runtime });
+    if (!runtime) this.supervisor = new SessionSupervisor(runtimeRoot, { runtime: this.runtime, ...supervisorOptions });
   }
 
   listIdentities(): ConsoleIdentity[] {
