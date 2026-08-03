@@ -22,5 +22,6 @@ network-runtime-discovery.json
 
 # Extension build artifacts (both old `-extension-` and newer `-vX.Y.Z` naming)
 claude-code-browser*.zip
-release/
+/release/
+apps/desktop/release/
 dist-web/
