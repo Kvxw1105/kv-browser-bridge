@@ -151,7 +151,7 @@ review must keep those paths explicitly separated.
 4. PR #10: Managed Multi-Identity Alpha after retargeting to `main` and final
    evidence revalidation.
 
-No PR was merged or closed during this audit.
+All four layers were merged into `main` on 2026-08-03 in the recorded order.
 
 ## Retarget plan
 
@@ -190,7 +190,8 @@ No PR was merged or closed during this audit.
 7. Run the single-inbound Observe qualification and the Strict policy focused
    tests; bind all evidence to the final candidate SHA.
 
-Do not retarget all upper PRs to `main` before their lower PR has merged.
+During the execution, each upper PR was retargeted to `main` only after its
+lower PR had merged, then rebased and re-validated before its own merge.
 
 ## Final revalidation matrix
 
