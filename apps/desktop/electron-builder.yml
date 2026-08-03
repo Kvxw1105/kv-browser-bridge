@@ -1,0 +1,27 @@
+appId: io.kv.browser-bridge.desktop
+productName: KV Browser Bridge
+copyright: Copyright (c) 2026 Kvxw1105
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - dist/**
+  - package.json
+  - "!**/*.map"
+
+asar: true
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: KV Browser Bridge

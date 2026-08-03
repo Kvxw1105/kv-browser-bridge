@@ -107,7 +107,7 @@ function buildTemplate(getWin: GetWin): MenuItemConstructorOptions[] {
     label: 'Help',
     role: 'help',
     submenu: [
-      { label: 'About Claude Code Browser', click: () => send(getWin, 'menu:about') },
+      { label: 'About KV Browser Bridge', click: () => send(getWin, 'menu:about') },
       { type: 'separator' },
       { label: 'Report an Issue…', click: () => { void shell.openExternal(REPO_ISSUES_URL); } },
     ],
