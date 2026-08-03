@@ -13,6 +13,14 @@ files:
 
 asar: true
 
+extraResources:
+  - from: ../../apps/extension/dist
+    to: extension
+  - from: ../../apps/chrome-bridge/dist
+    to: bridge
+  - from: ../../scripts/discover-network-runtime.ps1
+    to: scripts/discover-network-runtime.ps1
+
 win:
   target:
     - target: nsis

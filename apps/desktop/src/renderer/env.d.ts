@@ -19,6 +19,7 @@ declare global {
       stopAll(): Promise<IdentityConsoleApiResult<IdentityConsoleOperationResult[]>>;
       logs(): Promise<IdentityConsoleApiResult<IdentityConsoleLog[]>>;
       discover(): Promise<IdentityConsoleApiResult<unknown>>;
+      installBridge(): Promise<IdentityConsoleApiResult<unknown>>;
     };
     ccb: {
       /** True in Electron (preload bridge), false in plain browser (web-transport polyfill). */

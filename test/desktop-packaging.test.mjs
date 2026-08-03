@@ -23,6 +23,10 @@ test('desktop electron-builder configuration declares Windows target and product
   assert.match(config, /productName:\s*KV Browser Bridge/);
   assert.match(config, /target:\s*nsis/);
   assert.match(config, /- dist\/\*\*/);
+  assert.match(config, /extraResources:\s*$/m);
+  assert.match(config, /to:\s*extension/);
+  assert.match(config, /to:\s*bridge/);
+  assert.match(config, /to:\s*scripts\/discover-network-runtime\.ps1/);
 });
 
 test('root workspace exposes one-command desktop packaging entry points', async () => {
