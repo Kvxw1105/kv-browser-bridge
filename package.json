@@ -15,7 +15,7 @@
     "apps/*"
   ],
   "scripts": {
-    "test": "npm run test:branding && npm run test:identity-setup && npm run test:prepare-identity-config && npm run test:runtime-discovery && npm run test:local-chrome && node --test test/release-engineering.test.mjs",
+    "test": "npm run test:branding && npm run test:identity-setup && npm run test:prepare-identity-config && npm run test:runtime-discovery && npm run test:local-chrome && node --test test/release-engineering.test.mjs test/desktop-packaging.test.mjs",
     "check": "npm run check:local-chrome && npm run check:desktop && node scripts/check-versions.mjs",
     "package": "npm run build:extension && node scripts/package-extension.mjs",
     "release-check": "npm run test && npm run check && npm run package && node scripts/validate-npm-pack.mjs",
@@ -35,6 +35,8 @@
     "build:local-chrome": "npm run build:bridge && npm run build:codex-mcp && npm run build:extension",
     "check:local-chrome": "npm run build -w packages/shared && npm run build:local-chrome && npx tsc -p apps/chrome-bridge/tsconfig.json --noEmit && npx tsc -p apps/codex-mcp-server/tsconfig.json --noEmit && npx tsc -p apps/extension/tsconfig.json --noEmit",
     "check:desktop": "npm run build -w packages/browser-protocol -w packages/shared -w packages/agent-core -w apps/chrome-bridge && npm run typecheck -w apps/desktop && npm run build -w apps/desktop",
+    "pack:desktop": "npm run pack -w apps/desktop",
+    "dist:desktop": "npm run dist -w apps/desktop",
     "test:local-chrome": "npm run build -w packages/browser-protocol -w apps/chrome-bridge -w apps/codex-mcp-server && node --test packages/browser-protocol/test/*.test.mjs apps/chrome-bridge/test/*.test.mjs apps/codex-mcp-server/test/*.test.mjs",
     "test:branding": "node --test test/branding.test.mjs",
     "test:identity-setup": "node --test test/network-identity-setup.test.mjs",
