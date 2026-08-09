@@ -1,0 +1,15 @@
+{
+  "name": "@kv-browser-bridge/go-cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "kvg": "./cli.mjs"
+  },
+  "scripts": {
+    "cli": "node cli.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0"
+  }
+}

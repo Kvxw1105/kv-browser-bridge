@@ -1756,3 +1756,41 @@ body {
 .local-bridge-panel__repair-body { margin-top: 12px; }
 .local-bridge-panel__repair-body pre { max-height: 220px; overflow: auto; margin: 0 0 9px; padding: 10px; border: 1px solid rgba(255, 183, 157, .25); border-radius: 5px; background: rgba(0, 0, 0, .3); color: #ffe5dc; white-space: pre-wrap; word-break: break-word; font: 11px/1.55 "SF Mono", "Cascadia Code", monospace; }
 @media (max-width: 520px) { .local-bridge-panel__repair-header { flex-direction: column; } }
+
+/* KvGo */
+.local-bridge-panel__kvgo { border: 1px solid rgba(216, 255, 69, .22); }
+.local-bridge-panel__kvgo-title { display: flex; align-items: center; gap: 8px; }
+.local-bridge-panel__kvgo-badge { border: 1px solid var(--line); border-radius: 999px; padding: 2px 8px; font: 700 9px "SF Mono", "Cascadia Code", monospace; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.local-bridge-panel__kvgo-badge.is-on { border-color: var(--accent); color: var(--accent); }
+.local-bridge-panel__kvgo-switch { flex: 0 0 auto; border: 1px solid var(--accent); border-radius: 6px; padding: 5px 10px; background: transparent; color: var(--accent); font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; }
+.local-bridge-panel__kvgo-switch:hover { background: rgba(216, 255, 69, .12); }
+.local-bridge-panel__kvgo-hint { margin: 6px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.local-bridge-panel__kvgo-body { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+.local-bridge-panel__kvgo-row { display: flex; align-items: center; gap: 8px; font-size: 11px; }
+.local-bridge-panel__kvgo-row span { flex: 0 0 auto; color: var(--muted); }
+.local-bridge-panel__kvgo-row strong { color: var(--ink); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.local-bridge-panel__kvgo-row input { flex: 1 1 auto; min-width: 0; border: 1px solid var(--line); border-radius: 5px; padding: 5px 7px; background: rgba(0,0,0,.25); color: var(--ink); font: 11px/1.4 "SF Mono", "Cascadia Code", monospace; }
+.local-bridge-panel[data-theme="light"] .local-bridge-panel__kvgo-row input { background: rgba(0,0,0,.04); }
+.local-bridge-panel__kvgo-status { display: flex; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; font-size: 11px; }
+.local-bridge-panel__kvgo-led { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.local-bridge-panel__kvgo-led.is-running { background: var(--accent); box-shadow: 0 0 0 0 rgba(216,255,69,.5); animation: kvgo-pulse 1.4s ease-in-out infinite; }
+@keyframes kvgo-pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(216,255,69,.5); } 50% { box-shadow: 0 0 0 5px rgba(216,255,69,0); } }
+.local-bridge-panel__kvgo-status strong { color: var(--ink); }
+.local-bridge-panel__kvgo-status em { font-style: normal; color: var(--accent); }
+.local-bridge-panel__kvgo-summary { border-left: 2px solid var(--accent); padding: 4px 8px; background: rgba(216,255,69,.06); border-radius: 0 5px 5px 0; color: var(--muted); font-size: 10.5px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+.local-bridge-panel__kvgo-actions { display: flex; gap: 8px; }
+.local-bridge-panel__kvgo-actions button { flex: 1 1 auto; border-radius: 6px; padding: 7px 10px; font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; }
+.local-bridge-panel__kvgo-start { border: 1px solid var(--accent); background: var(--accent); color: var(--accent-ink); }
+.local-bridge-panel__kvgo-stop { border: 1px solid #ff7373; background: rgba(255,115,115,.15); color: #ff9b9b; }
+.local-bridge-panel__kvgo-resume { border: 1px solid var(--line); background: transparent; color: var(--ink); }
+.local-bridge-panel__kvgo-actions button:disabled { opacity: .45; cursor: default; }
+.local-bridge-panel__kvgo-error { color: #ff9b9b; font-size: 10.5px; }
+
+/* 卡片尺寸一致性 */
+.local-bridge-panel__workspace { align-items: stretch; }
+.local-bridge-panel__section--target,
+.local-bridge-panel__section--access { display: flex; flex-direction: column; }
+.local-bridge-panel__section--target .local-bridge-panel__target { flex: 1 1 auto; }
+.local-bridge-panel__section--target .local-bridge-panel__target-footer { flex: 0 0 auto; }
+.local-bridge-panel__section--access .local-bridge-panel__access-list { flex: 1 1 auto; display: flex; flex-direction: column; justify-content: space-evenly; }
+.local-bridge-panel__kvgo { margin-top: 12px; }

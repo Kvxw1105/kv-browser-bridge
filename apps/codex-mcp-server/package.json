@@ -13,6 +13,7 @@
     "dev": "tsx src/server.ts"
   },
   "dependencies": {
+    "@kv-browser-bridge/go-agent": "*",
     "@modelcontextprotocol/sdk": "^1.28.0",
     "zod": "^4.3.0"
   },

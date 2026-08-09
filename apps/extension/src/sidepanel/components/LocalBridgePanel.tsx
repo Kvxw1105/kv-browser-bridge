@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { MY_TAB_ID, sendToTab } from '../tab';
+import { KvGoPanel } from './KvGoPanel';
 
 type BridgeState = 'connecting' | 'connected' | 'disconnected';
 type BrowserTab = { id: number; title: string; url: string; active: boolean; favicon: string };
@@ -116,13 +117,28 @@ export function LocalBridgePanel() {
   };
 
   const repairPrompt = [
-    '\u8bf7\u4fee\u590d Kv Browser Bridge \u7684 Chrome Native Messaging \u8fde\u63a5\u3002',
+    '\u4f60\u662f\u672c\u673a\u7ec8\u7aef Agent\uff0c\u4e0d\u8981\u4f9d\u8d56\u4e4b\u524d\u7684\u5bf9\u8bdd\u4e0a\u4e0b\u6587\u3002',
+    '\u76ee\u6807\uff1a\u4fee\u590d Kv Browser Bridge \u7684 Chrome Native Messaging \u8fde\u63a5\u3002',
     `\u5f53\u524d\u6269\u5c55 ID\uff1a${chrome.runtime.id}`,
-    '\u5728 Kv Browser Bridge \u4ed3\u5e93\u6839\u76ee\u5f55\u6267\u884c\uff1a',
-    `node apps/chrome-bridge/dist/install.js repair ${chrome.runtime.id}`,
-    'node apps/chrome-bridge/dist/install.js doctor --json',
-    '\u786e\u8ba4 doctor \u7684 manifest\u3001registry-hkcu\u3001bridge-path \u548c log-directory \u5747\u4e3a ok\uff1b\u7136\u540e\u5728 chrome://extensions \u91cd\u65b0\u52a0\u8f7d\u8be5\u6269\u5c55\u3002',
-    '\u4e0d\u8981\u5220\u9664\u6216\u6e05\u7406 Chrome Profile\u3001Cookie\u3001LocalStorage\u3001IndexedDB\u3001\u7f13\u5b58\u6216\u767b\u5f55\u6001\u3002',
+    `\u6700\u8fd1\u9519\u8bef\uff1a${nativeError || '\u672a\u63d0\u4f9b'}`,
+    '\u53ea\u4fee\u6539 Kv Browser Bridge \u7684\u672c\u5730 Native Messaging \u914d\u7f6e\uff1b\u4e0d\u8981\u5220\u9664\u6216\u4fee\u6539 Chrome Profile\u3001Cookie\u3001LocalStorage\u3001IndexedDB\u3001\u7f13\u5b58\u6216\u767b\u5f55\u6001\u3002',
+    '',
+    '\u5728 Windows PowerShell \u6309\u4ee5\u4e0b\u987a\u5e8f\u6267\u884c\uff1a',
+    '$extensionId = \'' + chrome.runtime.id + '\'',
+    '$helper = Join-Path $env:LOCALAPPDATA \'KvBrowserBridge\\bin\\kv-browser-bridge-repair.cmd\'',
+    'if (Test-Path $helper) {',
+    '  & $helper repair $extensionId',
+    '  & $helper doctor --json',
+    '} else {',
+    '  $installer = Get-ChildItem -Path (Get-Location).Path -Filter install.js -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match \'\\\\apps\\\\chrome-bridge\\\\dist\\\\install\\.js$\' } | Select-Object -First 1',
+    '  if (-not $installer) { throw \'Kv Browser Bridge repair helper and source installer were not found.\' }',
+    '  & node $installer.FullName repair $extensionId',
+    '  & node $installer.FullName doctor --json',
+    '}',
+    '',
+    '\u9a8c\u8bc1 doctor \u4e2d\u7684 manifest\u3001registry-hkcu\u3001bridge-path\u3001repair-helper \u548c log-directory \u5747\u4e3a ok\u3002',
+    '\u6700\u540e\u63d0\u9192\u7528\u6237\u5728 chrome://extensions \u91cd\u65b0\u52a0\u8f7d\u8be5\u6269\u5c55\uff0c\u4e0d\u8981\u81ea\u52a8\u542f\u52a8\u65b0 Chrome\u3002',
+    '\u5982\u679c\u5931\u8d25\uff0c\u8fd4\u56de\u5931\u8d25\u5c42\u3001\u5b9e\u9645\u547d\u4ee4\u3001\u9000\u51fa\u7801\u3001\u539f\u59cb\u9519\u8bef\u3001\u65e5\u5fd7\u8def\u5f84\u548c\u6700\u5c0f\u4fee\u590d\u52a8\u4f5c\u3002',
   ].join('\n');
   const requestReconnect = () => {
     if (reconnecting) return;
@@ -260,6 +276,8 @@ export function LocalBridgePanel() {
           </div>
         </section>
       </div>
+
+      <KvGoPanel targetTabId={targetTabId} chinese={chinese} />
 
       <section className="local-bridge-panel__tabs" aria-labelledby="tabs-heading">
         <div className="local-bridge-panel__tabs-header">

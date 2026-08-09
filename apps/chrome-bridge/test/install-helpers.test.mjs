@@ -6,7 +6,9 @@ import {
   LEGACY_NATIVE_HOST_NAME,
   createNativeHostManifest,
   createKvWrapper,
+  createRepairHelper,
   isKvOwnedManifest,
+  isKvOwnedRepairHelper,
   isKvOwnedWrapper,
   parseInstallerArgs,
 } from '../dist/install-helpers.js';
@@ -70,4 +72,12 @@ test('omits coordination mode by default and emits it only when explicitly reque
   const observeWrapper = createKvWrapper('C:\\bridge\\bridge.js', 'C:\\node\\node.exe', 'shadow', 'observe');
   assert.match(observeWrapper, /set "KBB_RUNTIME_MODE=shadow"/);
   assert.match(observeWrapper, /set "KBB_COORDINATION_MODE=observe"/);
+});
+
+test('creates a standalone repair helper without browser data access', () => {
+  const helper = createRepairHelper('C:\\KvBrowserBridge\\install.js', 'C:\\node\\node.exe');
+  assert.match(helper, /repair helper - managed by Kv/);
+  assert.match(helper, /"C:\\node\\node\.exe" "C:\\KvBrowserBridge\\install\.js" %\*/);
+  assert.equal(isKvOwnedRepairHelper(helper), true);
+  assert.equal(isKvOwnedRepairHelper('@echo off'), false);
 });

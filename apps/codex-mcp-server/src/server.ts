@@ -5,6 +5,7 @@ import { isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod/v4';
 import { BridgeClient, BridgeError } from './bridge-client.js';
+import { registerGoTools } from './go.js';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const requestTimeoutMs = Number.parseInt(process.env.LOCAL_CHROME_REQUEST_TIMEOUT_MS ?? '', 10) || DEFAULT_TIMEOUT_MS;
@@ -14,7 +15,16 @@ function log(event: string, fields: Record<string, unknown> = {}): void {
   process.stderr.write(`${JSON.stringify({ time: new Date().toISOString(), service: 'kv-browser-bridge-mcp', event, ...fields })}\n`);
 }
 
-const bridge = new BridgeClient({ requestTimeoutMs, log });
+const goEventBuffer: Array<{ at: string; event: string; data: unknown }> = [];
+const bridge = new BridgeClient({
+  requestTimeoutMs,
+  log,
+  onEvent: (event) => {
+    if (event.event !== 'go_event') return;
+    goEventBuffer.push({ at: new Date().toISOString(), event: event.event ?? 'go_event', data: event.data });
+    if (goEventBuffer.length > 500) goEventBuffer.splice(0, goEventBuffer.length - 500);
+  },
+});
 const server = new McpServer({ name: 'kv-browser-bridge', version: '0.1.0' });
 
 const tabId = z.number().int().positive().optional().describe('Target Chrome tab ID. Uses the Bridge-selected tab when omitted.');
@@ -111,6 +121,18 @@ export function registerCoordinationTools(target: McpServer, invoke: BridgeInvok
 }
 
 registerCoordinationTools(server, (method, params, timeoutMs) => bridge.request(method, params, timeoutMs));
+registerGoTools(
+  server,
+  (method, params, timeoutMs) => bridge.request(method, params, timeoutMs),
+  log,
+  {
+    drain: (clear: boolean) => {
+      const out = [...goEventBuffer];
+      if (clear) goEventBuffer.length = 0;
+      return out;
+    },
+  },
+);
 
 async function callBridge(method: string, params: Record<string, unknown> = {}, timeoutMs?: number) {
   log('tool_request', { method });

@@ -67,6 +67,21 @@ export function createKvWrapper(
   return `@echo off\r\nREM Kv Browser Bridge wrapper - managed by Kv\r\n${runtime}${coordination}"${nodePath}" "${bridgePath}" %*\r\n`;
 }
 
+/**
+ * Generate a user-facing repair launcher outside the source checkout. The
+ * launcher keeps repair usable when an Agent is not started in the repository
+ * and exposes no browser data or credentials.
+ */
+export function createRepairHelper(installerPath: string, nodePath: string): string {
+  if (!isAbsolute(installerPath) || !/\.js$/i.test(installerPath)) throw new Error('Installer path must be an absolute JavaScript file path.');
+  if (!nodePath || !isAbsolute(nodePath)) throw new Error('Node runtime path must be absolute.');
+  return `@echo off\r\nREM Kv Browser Bridge repair helper - managed by Kv\r\n"${nodePath}" "${installerPath}" %*\r\n`;
+}
+
+export function isKvOwnedRepairHelper(contents: string): boolean {
+  return contents.includes('REM Kv Browser Bridge repair helper - managed by Kv');
+}
+
 export function isKvOwnedWrapper(contents: string): boolean {
   return contents.includes('REM Kv Browser Bridge wrapper - managed by Kv');
 }

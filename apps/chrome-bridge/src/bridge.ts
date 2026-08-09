@@ -2,7 +2,7 @@
 
 import { randomBytes, randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { createServer, type Server, type Socket } from 'node:net';
@@ -140,6 +140,35 @@ class ChromeBridge {
     this.nativeReady = true;
     this.lastExtensionMessageAt = new Date().toISOString();
     this.broadcastStatus();
+    if (message.type === 'go_event') {
+      this.logger.write('info', 'go.event', { data: message.data });
+      const payload = { type: 'event' as const, event: 'go_event', data: message.data };
+      for (const socket of this.clients) {
+        try { this.writePipe(socket, payload); } catch { /* drop for dead client */ }
+      }
+      return;
+    }
+    if (message.type === 'go_ledger_append') {
+      const data = (message.data ?? {}) as { key?: string; event?: Record<string, unknown> };
+      const key = typeof data.key === 'string' ? data.key : '';
+      const event = data.event && typeof data.event === 'object' ? data.event : null;
+      if (key && event) {
+        try {
+          const root = process.env.GO_RUNS_DIR
+            ?? join(process.env.LOCALAPPDATA ?? join(homedir(), 'AppData', 'Local'), 'KvBrowserBridge', 'go-runs');
+          mkdirSync(root, { recursive: true });
+          const file = join(root, key.replace(/[^a-zA-Z0-9_-]/g, '_') + '.jsonl');
+          appendFileSync(file, JSON.stringify({ ...event, at: event.at ?? new Date().toISOString() }) + '\n');
+          this.logger.write('info', 'go.ledger_append', { key, file });
+        } catch (error) {
+          this.logger.write('warn', 'go.ledger_append_failed', {
+            key,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+      return;
+    }
     if (!isBrowserResponse(message)) {
       this.logger.write('debug', 'native.message', { type: message.type });
       return;

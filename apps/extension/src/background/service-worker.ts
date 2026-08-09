@@ -1,11 +1,15 @@
 import { clearSelectedTab, getSelectedTabId, handleBrowserRequest, setSelectedTab, type BrowserResponse } from './browser-executor';
 import { flowRecordingStatus, recordFlowUserEvent, startFlowRecording, stopFlowRecording } from './flow-recorder';
+import { initGoAgent } from './go-agent';
+
+initGoAgent((message) => postNative(message));
 
 const HOST_NAME = 'io.kv.browser_bridge';
 const MAX_NATIVE_MESSAGE_BYTES = 480 * 1024;
 
 let nativePort: chrome.runtime.Port | null = null;
 let nativeReady = false;
+let lastNativeError = '';
 let reconnectAttempt = 0;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -53,6 +57,17 @@ function broadcastToPanels(message: unknown): void {
   for (const panel of panelPorts) {
     try { panel.postMessage(message); } catch { panelPorts.delete(panel); }
   }
+}
+
+function nativeStatusMessage(extra: Record<string, unknown> = {}) {
+  return {
+    type: '_native_status',
+    connected: nativePort != null,
+    nativeReady,
+    reconnectAttempt,
+    ...(lastNativeError ? { error: lastNativeError } : {}),
+    ...extra,
+  };
 }
 
 function connectionStatus() {
@@ -126,7 +141,8 @@ function forceReconnect(): void {
   if (current) {
     try { current.disconnect(); } catch { /* the new connection attempt is authoritative */ }
   }
-  broadcastToPanels({ type: '_native_status', connected: false, error: 'Manual reconnect requested.' });
+  lastNativeError = 'Manual reconnect requested.';
+  broadcastToPanels(nativeStatusMessage({ connected: false, nativeReady: false, reconnecting: true }));
   connectBridge();
 }
 
@@ -136,15 +152,16 @@ function connectBridge(): void {
     const port = chrome.runtime.connectNative(HOST_NAME);
     nativePort = port;
     nativeReady = false;
+    lastNativeError = '';
     reconnectAttempt = 0;
     log('bridge_connected');
-    broadcastToPanels({ type: '_native_status', connected: true, nativeReady: false });
+    broadcastToPanels(nativeStatusMessage());
 
     port.onMessage.addListener((message: { type?: string; requestId?: string; action?: string; params?: Record<string, unknown>; sessionId?: string; deadlineAt?: number; operationClass?: 'read' | 'non_idempotent_write'; domain?: string; paths?: string[]; status?: unknown }) => {
       if (message.type === 'bridge:ready') {
         nativeReady = true;
         log('bridge_ready');
-        broadcastToPanels({ type: '_native_status', connected: true, nativeReady: true });
+        broadcastToPanels(nativeStatusMessage());
         return;
       }
       if (message.type === 'browser:request' && typeof message.requestId === 'string' && typeof message.action === 'string') {
@@ -174,19 +191,22 @@ function connectBridge(): void {
       const error = chrome.runtime.lastError?.message ?? 'Chrome Bridge disconnected';
       nativePort = null;
       nativeReady = false;
+      lastNativeError = error;
       latestCoordinationStatus = null;
       if (heartbeatTimer) clearInterval(heartbeatTimer);
       heartbeatTimer = null;
       log('bridge_disconnected', { error });
       const repairRequired = /forbidden|native messaging host|specified native messaging host|not found|cannot find|access/i.test(error);
-      broadcastToPanels({ type: '_native_status', connected: false, nativeReady: false, error, repairRequired });
+      broadcastToPanels(nativeStatusMessage({ connected: false, nativeReady: false, repairRequired }));
       scheduleReconnect();
     });
     heartbeatTimer = setInterval(() => {
       if (nativePort === port) { try { port.postMessage({ type: 'ping' }); } catch { /* disconnect handler reconnects */ } }
     }, 15_000);
   } catch (error) {
-    log('bridge_connect_failed', { error: error instanceof Error ? error.message : String(error) });
+    lastNativeError = error instanceof Error ? error.message : String(error);
+    log('bridge_connect_failed', { error: lastNativeError });
+    broadcastToPanels(nativeStatusMessage({ connected: false, nativeReady: false }));
     scheduleReconnect();
   }
 }
@@ -204,8 +224,9 @@ chrome.runtime.onInstalled.addListener(({ reason }) => {
 });
 
 chrome.runtime.onConnect.addListener((port) => {
-  if (port.name !== 'sidepanel') return;
+  if (port.name !== 'sidepanel' && port.name !== 'popup') return;
   panelPorts.add(port);
+  try { port.postMessage(nativeStatusMessage()); } catch { /* closed */ }
   port.onMessage.addListener((message: { type?: string; tabId?: number } & Record<string, unknown>) => {
     if (message.type === 'KV_BRIDGE_RECONNECT') {
       forceReconnect();
@@ -216,7 +237,7 @@ chrome.runtime.onConnect.addListener((port) => {
       // Retain selection for legacy callers that do not provide tabId. New MCP
       // requests should always select explicitly through browser_switch_tab.
       setSelectedTab(message.tabId);
-      try { port.postMessage({ type: '_native_status', connected: nativePort != null, nativeReady }); } catch { /* closed */ }
+      try { port.postMessage(nativeStatusMessage()); } catch { /* closed */ }
       if (latestCoordinationStatus) {
         try { port.postMessage({ type: 'bridge:coordination_status', status: latestCoordinationStatus }); } catch { /* closed */ }
       }
@@ -229,19 +250,6 @@ chrome.runtime.onConnect.addListener((port) => {
   port.onDisconnect.addListener(() => panelPorts.delete(port));
 });
 
-chrome.action.onClicked.addListener((tab) => {
-  if (tab.id == null) return;
-  setSelectedTab(tab.id);
-  void chrome.tabs.create({
-    url: chrome.runtime.getURL(`sidepanel.html?tab=${tab.id}`),
-    active: true,
-  }).catch((error) => {
-    log('tool_tab_open_failed', {
-      tabId: tab.id,
-      error: error instanceof Error ? error.message : String(error),
-    });
-  });
-});
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   clearSelectedTab(tabId);

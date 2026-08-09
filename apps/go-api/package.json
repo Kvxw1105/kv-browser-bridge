@@ -1,0 +1,14 @@
+{
+  "name": "@kv-browser-bridge/go-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "KvGo HTTP API: REST wrapper over the GO Agent MCP tools.",
+  "scripts": {
+    "start": "node server.mjs",
+    "smoke": "node server.mjs --smoke"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0"
+  }
+}

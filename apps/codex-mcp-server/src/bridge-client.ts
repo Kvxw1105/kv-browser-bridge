@@ -59,6 +59,7 @@ export type BridgeClientOptions = {
   requestTimeoutMs: number;
   log: (event: string, fields?: Record<string, unknown>) => void;
   identity?: ClientIdentity;
+  onEvent?: (event: { type?: string; event?: string; data?: unknown }) => void;
 };
 
 function configPaths(): string[] {
@@ -321,6 +322,8 @@ export class BridgeClient {
         if (parsed.type === 'event' && parsed.event === 'connection:status') {
           this.bridgeStatus = parsed.data;
           this.options.log('bridge_connection_status', { bridge: parsed.data as Record<string, unknown> });
+        } else if (parsed.type === 'event') {
+          this.options.onEvent?.(parsed);
         } else this.handleResponse(parsed);
       } catch (error) {
         this.protocolDisconnect(`Invalid JSON from Chrome Bridge: ${error instanceof Error ? error.message : String(error)}`);

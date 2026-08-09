@@ -1,4 +1,6 @@
 // Prevent double-injection — use IIFE so we can early-return
+import './go-panel';
+
 (function() {
 if ((window as unknown as { __ccb_injected?: boolean }).__ccb_injected) return;
 (window as unknown as { __ccb_injected: boolean }).__ccb_injected = true;

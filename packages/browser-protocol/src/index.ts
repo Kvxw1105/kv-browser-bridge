@@ -118,6 +118,12 @@ export type NativeMessage = BrowserRequest | BrowserResponse | NativeChunk | {
 } | {
   type: 'bridge:coordination_status';
   status: CoordinationStatusView;
+} | {
+  type: 'go_event';
+  data: unknown;
+} | {
+  type: 'go_ledger_append';
+  data: { key: string; event: Record<string, unknown> };
 };
 
 export interface PipeHello {

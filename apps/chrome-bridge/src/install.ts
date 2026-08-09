@@ -8,7 +8,9 @@ import { fileURLToPath } from 'node:url';
 import {
   KV_NATIVE_HOST_NAME,
   createKvWrapper,
+  createRepairHelper,
   createNativeHostManifest,
+  isKvOwnedRepairHelper,
   isValidNativeHostManifest,
   parseInstallerArgs,
   validateBridgePath,
@@ -42,10 +44,12 @@ export function pathsForInstall(options: { appDataDir?: string; distDir?: string
   const appDataDir = options.appDataDir ?? appData();
   return {
     bridge: resolve(distDir, 'bridge.js'),
+    installer: resolve(distDir, 'install.js'),
     wrapper: join(distDir, `${KV_NATIVE_HOST_NAME}.cmd`),
     manifest: join(appDataDir, 'Google', 'Chrome', 'User Data', 'NativeMessagingHosts', `${KV_NATIVE_HOST_NAME}.json`),
     discovery: join(appDataDir, 'KvBrowserBridge', 'bridge.json'),
     logDir: join(appDataDir, 'KvBrowserBridge', 'logs'),
+    repairHelper: join(appDataDir, 'KvBrowserBridge', 'bin', 'kv-browser-bridge-repair.cmd'),
     testBackup: join(appDataDir, 'KvBrowserBridge', 'shadow-test-backup.json'),
   };
 }
@@ -123,11 +127,15 @@ export function install(extensionId: string, deps: { fs?: InstallerFs; runner?: 
   const paths = pathsForInstall(deps);
   validateBridgePath(paths.bridge);
   if (!isAbsolute(paths.bridge) || !fs.existsSync(paths.bridge)) throw new Error(`Bridge build is missing: ${paths.bridge}`);
-  const wrapper = createKvWrapper(paths.bridge, deps.nodePath ?? process.execPath);
+  const nodePath = deps.nodePath ?? process.execPath;
+  const wrapper = createKvWrapper(paths.bridge, nodePath);
+  const repairHelper = repairHelperContent(paths, nodePath);
   const manifest = createNativeHostManifest(extensionId, paths.wrapper);
   const manifestContents = `${JSON.stringify(manifest, null, 2)}\n`;
   const previousWrapper = artifactContents(fs, paths.wrapper);
   const previousManifest = artifactContents(fs, paths.manifest);
+  const previousRepairHelper = artifactContents(fs, paths.repairHelper);
+  assertRepairHelperOwnership(fs, paths.repairHelper);
   const previousRegistry = readRegistrySnapshot(runner, 'snapshot');
   const hasPriorState = previousWrapper !== undefined || previousManifest !== undefined || previousRegistry.keyExists;
   if (hasPriorState && (previousWrapper !== wrapper || previousManifest !== manifestContents || previousRegistry.value !== paths.manifest)) {
@@ -145,13 +153,28 @@ export function install(extensionId: string, deps: { fs?: InstallerFs; runner?: 
     if (artifactContents(fs, paths.manifest) !== manifestContents || artifactContents(fs, paths.wrapper) !== wrapper || registeredPath !== paths.manifest) {
       throw new Error('Installation consistency verification failed: exact manifest, wrapper, and HKCU registration must agree.');
     }
+    fs.mkdirSync(dirname(paths.repairHelper), { recursive: true });
+    atomicWriteFile(fs, paths.repairHelper, repairHelper);
+    if (artifactContents(fs, paths.repairHelper) !== repairHelper) throw new Error('Repair helper changed while installation was in progress.');
   } catch (error) {
     restoreArtifact(fs, paths.manifest, previousManifest, manifestContents);
     restoreArtifact(fs, paths.wrapper, previousWrapper, wrapper);
+    restoreArtifact(fs, paths.repairHelper, previousRepairHelper, repairHelper);
     if (registryAdded) restoreRegistryIfUnchanged(runner, previousRegistry, paths.manifest);
     throw error;
   }
   tryApplyWindowsAcl();
+}
+
+function repairHelperContent(paths: ReturnType<typeof pathsForInstall>, nodePath: string): string {
+  return createRepairHelper(paths.installer, nodePath);
+}
+
+function assertRepairHelperOwnership(fs: InstallerFs, path: string): void {
+  const current = artifactContents(fs, path);
+  if (current !== undefined && !isKvOwnedRepairHelper(current)) {
+    throw new Error(`Refusing to replace a non-Kv repair helper: ${path}`);
+  }
 }
 
 export function repairInstall(extensionId: string, deps: { fs?: InstallerFs; runner?: RegistryRunner; appDataDir?: string; distDir?: string; nodePath?: string } = {}): string {
@@ -167,15 +190,20 @@ export function repairInstall(extensionId: string, deps: { fs?: InstallerFs; run
     throw new Error('Refusing to repair a non-Kv Native Messaging registration.');
   }
   const previousWrapper = artifactContents(fs, paths.wrapper);
+  const previousRepairHelper = artifactContents(fs, paths.repairHelper);
+  assertRepairHelperOwnership(fs, paths.repairHelper);
   const previousRegistry = readRegistrySnapshot(runner, 'repair snapshot');
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const backupPath = join(deps.appDataDir ?? appData(), 'KvBrowserBridge', 'repair-backups', stamp);
   fs.mkdirSync(backupPath, { recursive: true });
   if (currentManifest !== undefined) atomicWriteFile(fs, join(backupPath, 'native-host.json'), currentManifest);
   if (previousWrapper !== undefined) atomicWriteFile(fs, join(backupPath, 'native-host.cmd'), previousWrapper);
+  if (previousRepairHelper !== undefined) atomicWriteFile(fs, join(backupPath, 'repair-helper.cmd'), previousRepairHelper);
   atomicWriteFile(fs, join(backupPath, 'registry.json'), JSON.stringify(previousRegistry, null, 2) + '\n');
 
-  const wrapper = createKvWrapper(paths.bridge, deps.nodePath ?? process.execPath);
+  const nodePath = deps.nodePath ?? process.execPath;
+  const wrapper = createKvWrapper(paths.bridge, nodePath);
+  const repairHelper = repairHelperContent(paths, nodePath);
   const manifestContents = `${JSON.stringify(createNativeHostManifest(extensionId, paths.wrapper), null, 2)}\n`;
   try {
     fs.mkdirSync(dirname(paths.manifest), { recursive: true });
@@ -186,9 +214,13 @@ export function repairInstall(extensionId: string, deps: { fs?: InstallerFs; run
     if (artifactContents(fs, paths.manifest) !== manifestContents || artifactContents(fs, paths.wrapper) !== wrapper || registeredPath !== paths.manifest) {
       throw new Error('Repair consistency verification failed.');
     }
+    fs.mkdirSync(dirname(paths.repairHelper), { recursive: true });
+    atomicWriteFile(fs, paths.repairHelper, repairHelper);
+    if (artifactContents(fs, paths.repairHelper) !== repairHelper) throw new Error('Repair helper changed while repair was in progress.');
   } catch (error) {
     restoreArtifact(fs, paths.manifest, currentManifest, manifestContents);
     restoreArtifact(fs, paths.wrapper, previousWrapper, wrapper);
+    restoreArtifact(fs, paths.repairHelper, previousRepairHelper, repairHelper);
     restoreRegistryIfUnchanged(runner, previousRegistry, paths.manifest);
     throw error;
   }
@@ -202,17 +234,21 @@ export function uninstall(deps: { fs?: InstallerFs; runner?: RegistryRunner; app
   const paths = pathsForInstall(deps);
   const manifestContents = artifactContents(fs, paths.manifest);
   const wrapperContents = artifactContents(fs, paths.wrapper);
+  const repairHelperContents = artifactContents(fs, paths.repairHelper);
   const manifest = readJson(fs, paths.manifest) as { allowed_origins?: unknown } | undefined;
   const origin = Array.isArray(manifest?.allowed_origins) ? manifest.allowed_origins[0] : undefined;
   const extensionId = typeof origin === 'string' ? /^chrome-extension:\/\/([a-p]{32})\/$/.exec(origin)?.[1] : undefined;
   const expectedManifest = extensionId ? `${JSON.stringify(createNativeHostManifest(extensionId, paths.wrapper), null, 2)}\n` : undefined;
-  const expectedWrapper = createKvWrapper(paths.bridge, deps.nodePath ?? process.execPath);
+  const nodePath = deps.nodePath ?? process.execPath;
+  const expectedWrapper = createKvWrapper(paths.bridge, nodePath);
+  const expectedRepairHelper = repairHelperContent(paths, nodePath);
   const registry = readRegistrySnapshot(runner, 'query before uninstall');
   const exactTriad = manifestContents === expectedManifest && wrapperContents === expectedWrapper && registry.value === paths.manifest;
   if (!exactTriad) return;
   requireRegistry(runner, 'delete', ['delete', registryKey, '/f']);
   fs.rmSync(paths.manifest, { force: true });
   fs.rmSync(paths.wrapper, { force: true });
+  if (repairHelperContents === expectedRepairHelper) fs.rmSync(paths.repairHelper, { force: true });
 }
 
 type TestBackup = { manifest?: string; wrapperPath?: string; wrapper?: string; registry: RegistrySnapshot };
@@ -290,6 +326,9 @@ export function doctor(deps: { fs?: InstallerFs; runner?: RegistryRunner; appDat
   const nodePath = deps.nodePath ?? process.execPath;
   checks.push(check('node-runtime', true, Boolean(nodePath) && fs.existsSync(nodePath), `Node ${process.version}`, { path: nodePath }));
   checks.push(check('bridge-path', true, fs.existsSync(paths.bridge) && isAbsolute(paths.bridge), fs.existsSync(paths.bridge) ? 'Bridge build found.' : 'Bridge build is missing.', { path: paths.bridge }));
+  const expectedRepairHelper = repairHelperContent(paths, nodePath);
+  const actualRepairHelper = artifactContents(fs, paths.repairHelper);
+  checks.push(check('repair-helper', true, actualRepairHelper === expectedRepairHelper, actualRepairHelper === expectedRepairHelper ? 'Standalone repair helper checked.' : 'Standalone repair helper is missing or stale.', { path: paths.repairHelper, installer: paths.installer }));
   const manifest = readJson(fs, paths.manifest);
   checks.push(check('manifest', true, isValidNativeHostManifest(manifest) && (manifest as { path: string }).path === paths.wrapper, manifest ? 'Native host manifest checked.' : 'Native host manifest is missing.', { path: paths.manifest }));
   const registry = runner(['query', registryKey, '/ve']);
