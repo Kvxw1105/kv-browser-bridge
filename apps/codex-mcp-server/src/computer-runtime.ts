@@ -8,7 +8,18 @@ import {
   validateActionEnvelope,
 } from './computer-contracts.js';
 import { BridgeError } from './bridge-client.js';
-import { WindowsUiaError, type WindowsUiaActionResult, type WindowsUiaObservation, type WindowsUiaStatus } from './windows-uia-client.js';
+import {
+  NativeAppError,
+  type NativeAppLaunchResult,
+  type NativeAppListResult,
+  type NativeAppPort,
+} from './native-app-launcher.js';
+import {
+  WindowsUiaError,
+  type WindowsUiaActionResult,
+  type WindowsUiaObservation,
+  type WindowsUiaStatus,
+} from './windows-uia-client.js';
 
 export interface ComputerBridgePort {
   request(method: string, params?: Record<string, unknown>, timeoutMs?: number): Promise<unknown>;
@@ -24,22 +35,50 @@ export interface WindowsUiaPort {
   close?(): Promise<void>;
 }
 
+const NATIVE_APP_NOT_CONFIGURED: NativeAppListResult = {
+  platform: process.platform,
+  available: false,
+  configuredApps: 0,
+  availableApps: 0,
+  apps: [],
+  configurationErrors: [],
+  error: {
+    code: 'NATIVE_APP_NOT_CONFIGURED',
+    message: 'Native App Launcher is not configured.',
+  },
+};
+
 export class BrowserComputerRuntime {
-  constructor(private readonly bridge: ComputerBridgePort, private readonly windows?: WindowsUiaPort) {}
+  constructor(
+    private readonly bridge: ComputerBridgePort,
+    private readonly windows?: WindowsUiaPort,
+    private readonly nativeApps?: NativeAppPort,
+  ) {}
 
   async status() {
-    const windowsStatus = this.windows
-      ? await this.windows.status()
-      : { available: false, error: { code: 'WINDOWS_UIA_NOT_CONFIGURED', message: 'Windows UIA client is not configured.' } };
+    const [windowsStatus, nativeAppStatus] = await Promise.all([
+      this.windows
+        ? this.windows.status()
+        : Promise.resolve({ available: false, error: { code: 'WINDOWS_UIA_NOT_CONFIGURED', message: 'Windows UIA client is not configured.' } }),
+      this.nativeApps
+        ? this.nativeApps.status()
+        : Promise.resolve(NATIVE_APP_NOT_CONFIGURED),
+    ]);
     const availableDrivers: DriverKind[] = ['browser'];
     if (windowsStatus.available) availableDrivers.push('windows-uia');
+    if (nativeAppStatus.available) availableDrivers.push('native-app');
     return {
       protocolVersion: COMPUTER_PROTOCOL_VERSION,
       availableDrivers,
-      plannedDrivers: ['vision', 'input', 'native-app'],
+      plannedDrivers: ['vision', 'input'],
       bridge: this.bridge.getStatus(),
       windowsUia: windowsStatus,
+      nativeAppLauncher: nativeAppStatus,
     };
+  }
+
+  async listApps(): Promise<NativeAppListResult> {
+    return this.nativeApps ? await this.nativeApps.listApps() : NATIVE_APP_NOT_CONFIGURED;
   }
 
   async observe(options: { browser?: boolean; windows?: boolean; windowHandle?: number; maxWindows?: number; maxElements?: number; maxDepth?: number } = {}): Promise<ComputerObservation> {
@@ -77,9 +116,11 @@ export class BrowserComputerRuntime {
   async execute(envelope: ActionEnvelope): Promise<ActionReceipt> {
     const startedAt = new Date().toISOString();
     const blocked = validateActionEnvelope(envelope);
-    if (blocked.length) return errorReceipt(envelope.actionId, startedAt, 'browser', 'blocked', 'POLICY_BLOCKED', blocked.join('; '), false);
+    const driver = driverForAction(envelope);
+    if (blocked.length) return errorReceipt(envelope.actionId, startedAt, driver, 'blocked', 'POLICY_BLOCKED', blocked.join('; '), false);
 
     if (envelope.action.type === 'browser_command') return await this.executeBrowser(envelope, startedAt);
+    if (envelope.action.type === 'launch_app') return await this.executeNativeApp(envelope, startedAt);
     if (!this.windows) return errorReceipt(envelope.actionId, startedAt, 'windows-uia', 'blocked', 'WINDOWS_UIA_NOT_CONFIGURED', 'Windows UIA driver is not configured.', false);
 
     try {
@@ -118,6 +159,35 @@ export class BrowserComputerRuntime {
     } catch (error) {
       const typed = error instanceof BridgeError ? error : new BridgeError('INTERNAL_ERROR', error instanceof Error ? error.message : String(error));
       return errorReceipt(envelope.actionId, startedAt, 'browser', 'failed', typed.code, typed.message, typed.retryable, 'failed');
+    }
+  }
+
+  private async executeNativeApp(envelope: ActionEnvelope, startedAt: string): Promise<ActionReceipt> {
+    if (envelope.action.type !== 'launch_app') throw new Error('Expected native application action.');
+    if (!this.nativeApps) {
+      return errorReceipt(envelope.actionId, startedAt, 'native-app', 'blocked', 'NATIVE_APP_NOT_CONFIGURED', 'Native App Launcher is not configured.', false);
+    }
+    try {
+      const result = await this.nativeApps.launch(envelope.action.appId);
+      const verification = verifyNativeAppResult(envelope, result);
+      return {
+        protocolVersion: COMPUTER_PROTOCOL_VERSION,
+        actionId: envelope.actionId,
+        startedAt,
+        finishedAt: new Date().toISOString(),
+        driver: 'native-app',
+        status: verification.status === 'failed' ? 'failed' : 'completed',
+        result,
+        verification,
+      };
+    } catch (error) {
+      const typed = error instanceof NativeAppError
+        ? error
+        : new NativeAppError('APP_LAUNCH_FAILED', error instanceof Error ? error.message : String(error), true);
+      const status: ActionReceipt['status'] = ['APP_NOT_ALLOWLISTED', 'APP_UNAVAILABLE', 'PLATFORM_UNSUPPORTED'].includes(typed.code)
+        ? 'blocked'
+        : 'failed';
+      return errorReceipt(envelope.actionId, startedAt, 'native-app', status, typed.code, typed.message, typed.retryable, 'failed');
     }
   }
 
@@ -170,6 +240,43 @@ function verifyBrowserResult(envelope: ActionEnvelope, result: unknown): ActionR
   return { status: passed ? 'passed' : 'failed', evidence: { expected } };
 }
 
+function verifyNativeAppResult(
+  envelope: ActionEnvelope,
+  result: NativeAppLaunchResult,
+): ActionReceipt['verification'] {
+  if (envelope.action.type !== 'launch_app') return { status: 'failed' };
+  if (envelope.expectedPostcondition.kind !== 'process_started') {
+    return {
+      status: 'failed',
+      evidence: {
+        expectedPostcondition: 'process_started',
+        actualPostcondition: envelope.expectedPostcondition.kind,
+      },
+    };
+  }
+  const expectedAppId = envelope.expectedPostcondition.appId ?? envelope.action.appId;
+  const appIdMatches = result.appId === envelope.action.appId && result.appId === expectedAppId;
+  const processIdMatches = envelope.expectedPostcondition.processId === undefined
+    || result.pid === envelope.expectedPostcondition.processId;
+  const validPid = Number.isInteger(result.pid) && result.pid > 0;
+  const validStartedAt = typeof result.startedAt === 'string'
+    && result.startedAt.length > 0
+    && !Number.isNaN(Date.parse(result.startedAt));
+  const passed = appIdMatches && processIdMatches && validPid && validStartedAt;
+  return {
+    status: passed ? 'passed' : 'failed',
+    evidence: {
+      appId: result.appId,
+      pid: result.pid,
+      startedAt: result.startedAt,
+      appIdMatches,
+      processIdMatches,
+      validPid,
+      validStartedAt,
+    },
+  };
+}
+
 function findElement(elements: unknown[], targetRef?: string): Record<string, unknown> | undefined {
   if (!targetRef) return undefined;
   return elements.find((item) => typeof item === 'object' && item !== null && (item as Record<string, unknown>).ref === targetRef) as Record<string, unknown> | undefined;
@@ -179,4 +286,10 @@ function asDriverFailure(driver: DriverKind, error: unknown): DriverFailure {
   if (error instanceof BridgeError) return { driver, code: error.code, message: error.message, retryable: error.retryable };
   if (error instanceof WindowsUiaError) return { driver, code: error.code, message: error.message, retryable: error.retryable };
   return { driver, code: driver === 'windows-uia' ? 'WINDOWS_UIA_OBSERVE_FAILED' : 'DRIVER_OBSERVE_FAILED', message: error instanceof Error ? error.message : String(error), retryable: true };
+}
+
+function driverForAction(envelope: ActionEnvelope): DriverKind {
+  if (envelope.action.type === 'browser_command') return 'browser';
+  if (envelope.action.type === 'launch_app') return 'native-app';
+  return 'windows-uia';
 }
