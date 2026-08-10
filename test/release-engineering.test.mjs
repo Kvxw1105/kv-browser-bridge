@@ -7,7 +7,7 @@ import { createDeterministicZip, validateExtensionDist } from '../scripts/packag
 import { assertVersionConsistency } from '../scripts/check-versions.mjs';
 
 test('release package versions are consistent', async () => {
-  assert.equal(await assertVersionConsistency(), '0.2.10');
+  assert.equal(await assertVersionConsistency(), '0.2.13');
 });
 
 test('extension archive generation is deterministic', async (t) => {
