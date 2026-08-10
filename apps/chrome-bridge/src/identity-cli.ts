@@ -7,6 +7,7 @@ import { buildLaunchPlan } from './identity/launch-plan.js';
 import { validateManifest } from './identity/health.js';
 import type { IdentityManifest, RuntimeReceipt } from './identity/model.js';
 import { buildNetworkLeakAcceptanceReport, writeNetworkLeakAcceptanceReport } from './identity/network-leak-report.js';
+import { DEFAULT_NETWORK_ENFORCEMENT_POLICY, enforceNetworkAssessment, type NetworkEnforcementPolicy } from './identity/network-enforcement.js';
 import { freezeNetworkIdentityRecord, readNetworkIdentityRecord, recordNetworkObservation, resetNetworkIdentityRecord } from './identity/network-observation.js';
 import { probeProxyEndpoint } from './identity/network-preflight.js';
 import { defaultRuntimeRoot, runtimePaths } from './identity/paths.js';
@@ -142,12 +143,18 @@ async function verifyNetworkLeaks(
     generatedAt: evidence.observedAt,
   });
   const reportPath = writeNetworkLeakAcceptanceReport(rootDir, report);
-  if (!report.ready) {
+  // Probe modules must not apply lifecycle actions directly (NETWORK_ISOLATION_ACCEPTANCE_V1).
+  // The enforcement policy decides whether an observation warrants a hard action:
+  // Observe mode (the default) only warns and keeps the browser running; Strict mode
+  // may freeze/stop for configured hard failures.
+  const policy: NetworkEnforcementPolicy = { ...DEFAULT_NETWORK_ENFORCEMENT_POLICY };
+  const decision = enforceNetworkAssessment(report, policy);
+  if (decision.action === 'stop' || decision.action === 'freeze') {
     const frozenNetwork = freezeNetworkIdentityRecord(rootDir, manifest.identityId, report.blockedReasons);
     const stopped = runtime.stop(manifest);
-    return { ok: false, evidence, report, reportPath, network: frozenNetwork, stopped, error: { code: 'NETWORK_LEAK_ACCEPTANCE_FAILED', message: 'Identity browser was frozen and stopped because network leak acceptance did not pass.' } };
+    return { ok: false, evidence, report, reportPath, network: frozenNetwork, stopped, enforcement: decision, error: { code: 'NETWORK_LEAK_ACCEPTANCE_FAILED', message: 'Identity browser was frozen and stopped because network leak acceptance did not pass under the enforcement policy.' } };
   }
-  return { ok: true, evidence, report, reportPath };
+  return { ok: true, evidence, report, reportPath, enforcement: decision, warnings: decision.warnings };
 }
 
 function readRuntimeSessionId(rootDir: string, identityId: string): string | undefined {

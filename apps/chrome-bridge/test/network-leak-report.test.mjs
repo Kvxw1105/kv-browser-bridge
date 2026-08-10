@@ -65,3 +65,38 @@ test('writes a deterministic private acceptance report for the identity', () => 
   assert.equal(saved.identityId, 'huicelang-xhs');
   assert.equal(saved.ready, true);
 });
+
+test('treats mDNS-only WebRTC observations as PASS, not a leak', () => {
+  const report = buildNetworkLeakAcceptanceReport({
+    ...base,
+    webrtcCandidates: [
+      'candidate:1 1 UDP 2122260223 abcdef.local 50000 typ host generation 0',
+      'candidate:2 1 UDP 2122260223 fedcba.local 50001 typ host generation 0',
+    ],
+  });
+  assert.equal(report.webrtc.status, 'pass');
+  assert.deepEqual(report.webrtc.observed, []);
+  assert.equal(report.ready, true);
+  assert.ok(!report.blockedReasons.includes('WEBRTC_LEAK_DETECTED'));
+});
+
+test('still fails closed on a real WebRTC IP outside the allow list', () => {
+  const report = buildNetworkLeakAcceptanceReport({
+    ...base,
+    webrtcCandidates: [
+      'candidate:1 1 UDP 2122260223 198.51.100.7 54321 typ srflx generation 0',
+      'candidate:2 1 UDP 2122260223 abcdef.local 50000 typ host generation 0',
+    ],
+  });
+  assert.equal(report.webrtc.status, 'fail');
+  assert.deepEqual(report.webrtc.observed, ['srflx:198.51.100.7']);
+  assert.ok(report.blockedReasons.includes('WEBRTC_LEAK_DETECTED'));
+  assert.equal(report.ready, false);
+});
+
+test('keeps WebRTC unverified when no candidates were observed', () => {
+  const report = buildNetworkLeakAcceptanceReport({ ...base, webrtcCandidates: undefined });
+  assert.equal(report.webrtc.status, 'unverified');
+  assert.equal(report.ready, false);
+  assert.ok(report.blockedReasons.includes('WEBRTC_UNVERIFIED'));
+});

@@ -42,13 +42,14 @@ export function buildNetworkLeakAcceptanceReport(input: BuildLeakReportInput): N
   const blockedReasons: string[] = [];
   const publicEgress = compareSingleIp(input.publicIp, input.baselinePublicIp, 'PUBLIC_EGRESS_UNVERIFIED', 'PUBLIC_EGRESS_MISMATCH', blockedReasons);
   const dns = compareSets(input.dnsResolvers, input.expectedDnsResolvers, 'DNS_UNVERIFIED', 'DNS_ROUTE_MISMATCH', blockedReasons);
-  const webrtc = compareSets(
-    normalizeWebRtcObservations(input.webrtcCandidates),
-    normalizeWebRtcObservations(input.allowedWebrtcCandidates),
-    'WEBRTC_UNVERIFIED',
-    'WEBRTC_LEAK_DETECTED',
-    blockedReasons,
-  );
+  // `host:mdns`/`mdns` are not real WebRTC IP leaks (see NETWORK_ISOLATION_ACCEPTANCE_V1).
+  // Filter them before comparison so mDNS-only observations pass instead of failing
+  // the acceptance report, consistent with `hasRealWebRtcLeak` in network-enforcement.
+  const observedWebrtcRaw = normalizeWebRtcObservations(input.webrtcCandidates);
+  const observedWebrtc = observedWebrtcRaw === undefined ? undefined : observedWebrtcRaw.filter(isRealWebRtcObservation);
+  const allowedWebrtcRaw = normalizeWebRtcObservations(input.allowedWebrtcCandidates);
+  const allowedWebrtc = allowedWebrtcRaw === undefined ? undefined : allowedWebrtcRaw.filter(isRealWebRtcObservation);
+  const webrtc = compareSets(observedWebrtc, allowedWebrtc, 'WEBRTC_UNVERIFIED', 'WEBRTC_LEAK_DETECTED', blockedReasons);
 
   let ipv6: NetworkLeakCheck;
   const observedIpv6 = (input.ipv6Addresses ?? []).filter((value) => isIP(value) === 6);
@@ -128,6 +129,11 @@ function compareSingleIp(
     return { status: 'fail', observed: [observed], expected: [expected] };
   }
   return { status: 'pass', observed: [observed], expected: [expected] };
+}
+
+function isRealWebRtcObservation(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return normalized !== 'mdns' && !normalized.endsWith(':mdns');
 }
 
 function compareSets(
