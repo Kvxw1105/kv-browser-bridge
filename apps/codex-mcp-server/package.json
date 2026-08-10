@@ -1,6 +1,6 @@
 {
   "name": "@kv-browser-bridge/codex-mcp-server",
-  "version": "0.2.10",
+  "version": "0.3.0",
   "private": true,
   "description": "Standalone stdio MCP servers for the local Chrome Bridge and Computer Use runtime.",
   "type": "module",

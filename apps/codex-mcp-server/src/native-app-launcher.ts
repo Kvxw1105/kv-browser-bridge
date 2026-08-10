@@ -224,7 +224,13 @@ export class NativeAppLauncher implements NativeAppPort {
 }
 
 function builtInDefinitions(env: NodeJS.ProcessEnv): NativeAppDefinition[] {
-  const windowsRoot = env.SystemRoot ?? env.WINDIR;
+  // Node exposes process.env keys case-insensitively, but `{ ...process.env }`
+  // snapshots (NativeAppLauncher.environment) keep only the canonical casing
+  // (e.g. PROGRAMFILES). Read both spellings so built-in discovery works
+  // regardless of how the environment object was constructed.
+  const windowsRoot = env.SystemRoot ?? env.SYSTEMROOT ?? env.WINDIR;
+  const programFiles = env.ProgramFiles ?? env.PROGRAMFILES;
+  const programFilesX86 = env['ProgramFiles(x86)'] ?? env['PROGRAMFILES(X86)'];
   return [
     {
       appId: 'notepad',
@@ -256,8 +262,8 @@ function builtInDefinitions(env: NodeJS.ProcessEnv): NativeAppDefinition[] {
       commandCandidates: compact([
         'chrome.exe',
         env.LOCALAPPDATA ? win32.join(env.LOCALAPPDATA, 'Google', 'Chrome', 'Application', 'chrome.exe') : undefined,
-        env.ProgramFiles ? win32.join(env.ProgramFiles, 'Google', 'Chrome', 'Application', 'chrome.exe') : undefined,
-        env['ProgramFiles(x86)'] ? win32.join(env['ProgramFiles(x86)'], 'Google', 'Chrome', 'Application', 'chrome.exe') : undefined,
+        programFiles ? win32.join(programFiles, 'Google', 'Chrome', 'Application', 'chrome.exe') : undefined,
+        programFilesX86 ? win32.join(programFilesX86, 'Google', 'Chrome', 'Application', 'chrome.exe') : undefined,
       ]),
       args: [],
       source: 'builtin',

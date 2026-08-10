@@ -163,3 +163,28 @@ test('waits for a spawn event and times out with APP_LAUNCH_TIMEOUT', async () =
   );
   assert.equal(child.unrefCalled, true);
 });
+
+test('resolves built-in paths with both canonical and upper-case env spellings', async () => {
+  const seen = [];
+  const launcher = new NativeAppLauncher({
+    platform: 'win32',
+    env: { PROGRAMFILES: 'C:\\Program Files', 'PROGRAMFILES(X86)': 'C:\\Program Files (x86)', SYSTEMROOT: 'C:\\Windows', LOCALAPPDATA: 'C:\\Users\\u\\AppData\\Local' },
+    resolveCommand: async (candidate) => { seen.push(candidate); return undefined; },
+  });
+  await launcher.listApps();
+  const chromeCandidates = seen.filter((c) => /chrome\.exe$/i.test(c));
+  assert.ok(chromeCandidates.some((c) => c === 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'), 'Program Files candidate present');
+  assert.ok(chromeCandidates.some((c) => c === 'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe'), 'Program Files (x86) candidate present');
+  const notepadCandidates = seen.filter((c) => /notepad\.exe$/i.test(c));
+  assert.ok(notepadCandidates.some((c) => c === 'C:\\Windows\\System32\\notepad.exe'), 'SystemRoot candidate present');
+});
+
+test('keeps mixed env casing working alongside canonical spelling', async () => {
+  const launcher = new NativeAppLauncher({
+    platform: 'win32',
+    env: { ProgramFiles: 'C:\\Program Files', SystemRoot: 'C:\\Windows' },
+    resolveCommand: async (candidate) => candidate,
+  });
+  const status = await launcher.listApps();
+  assert.equal(status.apps.find((app) => app.appId === 'chrome').available, true);
+});
