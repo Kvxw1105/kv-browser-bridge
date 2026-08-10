@@ -195,6 +195,11 @@ async function resolveExecutable(): Promise<string> {
   const moduleDir = dirname(fileURLToPath(import.meta.url));
   const repoRoot = resolve(moduleDir, '..', '..', '..');
   const candidates = [
+    // Prefer the self-contained single-file publish output: it bundles the .NET
+    // runtime and works even when MCP stdio transports strip non-whitelisted
+    // environment variables such as DOTNET_ROOT (framework-dependent builds
+    // then fail host resolution with 0x80008096).
+    join(repoRoot, 'apps', 'windows-uia-driver', 'publish', 'kv-windows-uia-driver.exe'),
     join(repoRoot, 'apps', 'windows-uia-driver', 'bin', 'Release', 'net8.0-windows', 'kv-windows-uia-driver.exe'),
     join(repoRoot, 'apps', 'windows-uia-driver', 'bin', 'Debug', 'net8.0-windows', 'kv-windows-uia-driver.exe'),
     join(repoRoot, 'apps', 'windows-uia-driver', 'bin', 'Release', 'net8.0-windows', 'kv-windows-uia-driver.dll'),
