@@ -32,11 +32,13 @@ test('reports ready only when required, optional, and Codex checks pass', () => 
   const snapshot = summarizeComputerStatus(report([
     ...requiredChecks,
     { name: 'chrome-bridge', required: false, ok: true, message: 'ok' },
+    { name: 'native-app-launcher', required: false, ok: true, message: 'ok' },
   ]), codex(true));
   assert.equal(snapshot.ok, true);
   assert.equal(snapshot.state, 'ready');
   assert.equal(snapshot.runtime.requiredPassed, 2);
-  assert.equal(snapshot.runtime.optionalPassed, 1);
+  assert.equal(snapshot.runtime.optionalPassed, 2);
+  assert.equal(snapshot.runtime.optionalTotal, 2);
   assert.deepEqual(snapshot.nextActions, []);
 });
 
@@ -44,10 +46,24 @@ test('reports degraded when optional Chrome integration is unavailable', () => {
   const snapshot = summarizeComputerStatus(report([
     ...requiredChecks,
     { name: 'chrome-bridge', required: false, ok: false, message: 'not connected' },
+    { name: 'native-app-launcher', required: false, ok: true, message: 'ok' },
   ]), codex(true));
   assert.equal(snapshot.ok, true);
   assert.equal(snapshot.state, 'degraded');
   assert.match(snapshot.nextActions[0], /Chrome extension/);
+});
+
+test('reports degraded and counts the optional native launcher check', () => {
+  const snapshot = summarizeComputerStatus(report([
+    ...requiredChecks,
+    { name: 'chrome-bridge', required: false, ok: true, message: 'ok' },
+    { name: 'native-app-launcher', required: false, ok: false, message: 'No allowlisted app is available.' },
+  ]), codex(true));
+  assert.equal(snapshot.state, 'degraded');
+  assert.equal(snapshot.runtime.optionalPassed, 1);
+  assert.equal(snapshot.runtime.optionalTotal, 2);
+  assert.match(snapshot.nextActions[0], /native-app-launcher/);
+  assert.match(snapshot.nextActions[0], /No allowlisted app/);
 });
 
 test('reports not-installed when runtime works but Codex is not registered', () => {
