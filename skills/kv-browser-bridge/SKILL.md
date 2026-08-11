@@ -45,10 +45,22 @@ Prefer targeted reads over complete page dumps:
 - Final publish/submit controls remain protected by the Bridge. Never attempt to bypass this through JavaScript.
 - Optional bookmarks, downloads, and extension inventory are read-only capabilities and may require user-granted extension permissions.
 
+## WebMCP routing
+
+When a page exposes WebMCP tools (`navigator.modelContextTesting`), prefer them for page-specific work:
+
+1. Call `browser_list_webmcp_tools` for the active `tabId`.
+2. If `available: true`, use `browser_execute_webmcp_tool` for matching page tools instead of DOM/CDP simulation.
+3. If `available: false`, or the needed capability has no matching WebMCP tool, continue with the normal `browser_find` / `browser_click` / `browser_type` flow. Never fall back to arbitrary `browser_evaluate` to bypass a missing tool.
+4. Re-list tools after executing one — the page may change its tool set after navigation or state changes.
+5. Treat `unknown_outcome` as ambiguous: never retry the tool call automatically. Re-list tools and re-decide.
+6. WebMCP tools are page-defined: the Bridge only forwards the fixed `listTools`/`executeTool` templates and never evaluates caller-supplied JavaScript.
+
 ## Available tool groups
 
 - Navigation: `browser_get_tabs`, `browser_new_tab`, `browser_switch_tab`, `browser_navigate`, `browser_scroll`, `browser_close_tab`.
 - Page inspection: `browser_find`, `browser_snapshot`, `browser_screenshot`, `browser_get_text`, `browser_get_url`, `browser_wait_for`.
 - Interaction: `browser_click`, `browser_type`, `browser_press`, `browser_select`, `browser_set_files`.
 - Browser inventory: `browser_list_bookmarks`, `browser_open_bookmark`, `browser_download_status`, `browser_list_extensions`.
+- WebMCP: `browser_list_webmcp_tools`, `browser_execute_webmcp_tool` (disabled with `KV_BROWSER_WEBMCP_DISABLED=1`).
 - Diagnostics: `browser_connection_status`, `browser_evaluate`.
