@@ -245,6 +245,23 @@ server.tool('browser_evaluate', 'Evaluate a JavaScript expression in a Chrome pa
   allowSideEffects: z.boolean().optional().describe('Must be explicitly true for a Bridge that permits side effects.'),
 }, async (params) => callBridge('browser_evaluate', params));
 
+// WebMCP support is on by default and can be disabled with
+// KV_BROWSER_WEBMCP_DISABLED=1; browser tools then behave exactly as before.
+const webmcpEnabled = process.env.KV_BROWSER_WEBMCP_DISABLED !== '1';
+
+if (webmcpEnabled) {
+  server.tool('browser_list_webmcp_tools', 'Detect WebMCP tools exposed by the current page via navigator.modelContextTesting.listTools. When available:true the Agent should prefer matching WebMCP tools over DOM/CDP operations for page-specific work; when available:false (or after a tool disappears) continue with the regular browser_find/browser_click/browser_type/browser_evaluate tools. The list is re-read on every call, so call it again after navigation.', {
+    ...{ tabId },
+  }, async (params) => callBridge('browser_list_webmcp_tools', params));
+
+  server.tool('browser_execute_webmcp_tool', 'Execute one WebMCP tool in the current tab using the Bridge fixed executeTool template (the tool list is re-checked first; the tool result is returned structured; the tool list is re-listed after execution in toolsAfter). Status: completed | unavailable | tool_not_found | failed | unknown_outcome. unknown_outcome means navigation, disconnect, or timeout made the outcome unknowable — never retry it, re-list tools instead. This tool never evaluates caller-supplied JavaScript.', {
+    ...{ tabId },
+    name: z.string().min(1).describe('Exact WebMCP tool name previously returned by browser_list_webmcp_tools.'),
+    input: z.record(z.string(), z.unknown()).optional().describe('Tool input object. Serialized to JSON before executeTool.'),
+    timeoutMs: z.number().int().positive().max(120_000).optional().describe('Execution timeout in milliseconds; an ambiguous timeout returns unknown_outcome.'),
+  }, async ({ timeoutMs, ...params }) => callBridge('browser_execute_webmcp_tool', params, timeoutMs));
+}
+
 server.tool('browser_set_files', 'Set files on an input[type=file] using Chrome DevTools Protocol. Paths must be absolute local paths.', {
   ...{ tabId }, ...locator,
   files: z.array(z.string().min(1).refine(isAbsolute, 'Each file path must be absolute.')).min(1).describe('Absolute local file paths to set on the upload input.'),

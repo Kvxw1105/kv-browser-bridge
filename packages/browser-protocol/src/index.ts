@@ -67,7 +67,9 @@ export type BrowserAction =
   | 'get_response_body'
   | 'inspect_element'
   | 'get_element_styles'
-  | 'page_metrics';
+  | 'page_metrics'
+  | 'list_webmcp_tools'
+  | 'execute_webmcp_tool';
 
 export type BrowserToolName = `browser_${BrowserAction}`;
 export type OperationClass = 'read' | 'non_idempotent_write';
@@ -190,7 +192,10 @@ export interface BridgeConnectionStatus {
 }
 
 export function operationClassFor(action: BrowserAction): OperationClass {
-  return new Set<BrowserAction>(['get_tabs', 'find', 'download_status', 'list_bookmarks', 'list_extensions', 'snapshot', 'screenshot', 'wait_for', 'get_text', 'get_url', 'console_logs', 'console_errors', 'network_requests', 'network_failures', 'get_response_body', 'inspect_element', 'get_element_styles', 'page_metrics']).has(action)
+  // `execute_webmcp_tool` is a page-side write: an ambiguous timeout or
+  // disconnect must surface as UNKNOWN_OUTCOME so the caller never retries
+  // the tool call (WebMCP execution can have side effects on the page).
+  return new Set<BrowserAction>(['get_tabs', 'find', 'download_status', 'list_bookmarks', 'list_extensions', 'snapshot', 'screenshot', 'wait_for', 'get_text', 'get_url', 'console_logs', 'console_errors', 'network_requests', 'network_failures', 'get_response_body', 'inspect_element', 'get_element_styles', 'page_metrics', 'list_webmcp_tools']).has(action)
     ? 'read' : 'non_idempotent_write';
 }
 
@@ -212,7 +217,7 @@ export function browserActionFromTool(method: BrowserToolName): BrowserAction {
 }
 
 export function isBrowserToolName(value: string): value is BrowserToolName {
-  return /^browser_(get_tabs|new_tab|switch_tab|scroll|find|close_tab|download_status|list_bookmarks|open_bookmark|list_extensions|navigate|snapshot|screenshot|click|type|press|select|evaluate|set_files|wait_for|get_text|get_url|console_logs|console_errors|network_requests|network_failures|get_response_body|inspect_element|get_element_styles|page_metrics)$/.test(value);
+  return /^browser_(get_tabs|new_tab|switch_tab|scroll|find|close_tab|download_status|list_bookmarks|open_bookmark|list_extensions|navigate|snapshot|screenshot|click|type|press|select|evaluate|set_files|wait_for|get_text|get_url|console_logs|console_errors|network_requests|network_failures|get_response_body|inspect_element|get_element_styles|page_metrics|list_webmcp_tools|execute_webmcp_tool)$/.test(value);
 }
 
 export function isNativeChunk(value: unknown): value is NativeChunk {
@@ -272,3 +277,5 @@ export function asBridgeError(error: string | BridgeError | undefined): BridgeEr
   }
   return error;
 }
+
+export * from './webmcp.js';
