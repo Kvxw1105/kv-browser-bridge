@@ -15,7 +15,7 @@
     "apps/*"
   ],
   "scripts": {
-    "test": "npm run test:branding && npm run test:identity-setup && npm run test:prepare-identity-config && npm run test:runtime-discovery && npm run test:local-chrome && node --test test/release-engineering.test.mjs test/desktop-packaging.test.mjs",
+    "test": "npm run test:branding && npm run test:identity-setup && npm run test:prepare-identity-config && npm run test:runtime-discovery && npm run test:local-chrome && node --test test/release-engineering.test.mjs test/desktop-packaging.test.mjs test/desktop-identity-dir.test.mjs",
     "check": "npm run check:local-chrome && npm run check:desktop && node scripts/check-versions.mjs",
     "package": "npm run build:extension && node scripts/package-extension.mjs",
     "release-check": "npm run test && npm run check && npm run package && node scripts/validate-npm-pack.mjs",

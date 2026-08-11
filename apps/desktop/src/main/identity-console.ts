@@ -4,22 +4,21 @@ import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { IdentityConsoleService } from '../../../chrome-bridge/src/identity/console-service.js';
+import { defaultRuntimeRoot } from '../../../chrome-bridge/src/identity/paths.js';
+import { migrateLegacyConsoleDir, resolveIdentityConsoleDir } from '../../../../scripts/identity-console-dir.mjs';
 import type { IdentityConsoleApiResult, IdentityConsoleItem, IdentityConsoleOperationResult, IdentityConsoleLog } from '../shared/identity-console.js';
 import type { IdentityManifest } from '../../../chrome-bridge/src/identity/model.js';
 
 let service: IdentityConsoleService | undefined;
 
-export function resolveIdentityConsoleDir(
-  env: NodeJS.ProcessEnv = process.env,
-  cwd = process.cwd(),
-  appDataDir = join(app.getPath('userData'), 'identity-console'),
-): string {
-  const configured = env['KV_BROWSER_IDENTITY_HOME']?.trim();
-  if (configured) return resolve(configured);
-  const repositoryLocal = resolve(cwd, 'local');
-  if (existsSync(repositoryLocal)) return repositoryLocal;
-  return appDataDir;
-}
+/**
+ * The desktop console shares one identity world with the CLI/runtime:
+ * manifests live under %LOCALAPPDATA%\KvBrowserBridge\identity-console and the
+ * runtime root is the CLI default (%LOCALAPPDATA%\KvBrowserBridge\identities),
+ * so identities created by the CLI (or real-network qualification) show up in
+ * the desktop console and vice versa. KV_BROWSER_IDENTITY_HOME overrides the
+ * manifest location for development.
+ */
 
 function resolveExtensionDir(env: NodeJS.ProcessEnv = process.env): string | undefined {
   const configured = env['KV_BROWSER_EXTENSION_PATH']?.trim();
@@ -43,7 +42,11 @@ function unpackedExtensionId(extensionPath: string): string {
 }
 
 function getService(): IdentityConsoleService {
-  if (!service) service = new IdentityConsoleService(resolveIdentityConsoleDir(), undefined, undefined, { extensionPath: resolveExtensionDir() });
+  if (!service) {
+    const localDir = resolveIdentityConsoleDir(process.env, process.cwd());
+    migrateLegacyConsoleDir(localDir, app.getPath('userData'));
+    service = new IdentityConsoleService(localDir, defaultRuntimeRoot(), undefined, { extensionPath: resolveExtensionDir() });
+  }
   return service;
 }
 function discover(): unknown {

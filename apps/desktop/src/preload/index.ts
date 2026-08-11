@@ -3,6 +3,7 @@
  * renderer — the desktop equivalent of the extension's chrome.runtime.Port.
  */
 import './identity-console.js';
+import './computer-status.js';
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { ClientMessage, ServerMessage } from '@claude-code-browser/shared';
 
