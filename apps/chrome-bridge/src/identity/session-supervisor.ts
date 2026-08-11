@@ -121,7 +121,13 @@ export class SessionSupervisor {
         }
       }
     }
-    const bridge = await this.waitForBridge(manifest, this.options.bridgeTimeoutMs ?? 15_000);
+    const bridge = await this.waitForBridge(
+      manifest,
+      this.options.bridgeTimeoutMs ?? 15_000,
+      this.options.extensionPath && transport && provision?.ok && provision.extensionId
+        ? () => this.reactivateExtension(transport, provision)
+        : undefined,
+    );
     if (transport && provision?.activationTargetId) {
       await transport.request('Target.closeTarget', { targetId: provision.activationTargetId }).catch(() => undefined);
     }
@@ -146,14 +152,44 @@ export class SessionSupervisor {
 
   status(manifest: IdentityManifest): ManagedSessionSnapshot { return this.snapshot(manifest); }
 
-  private async waitForBridge(manifest: IdentityManifest, timeoutMs: number): Promise<BridgeReadiness> {
+  private async waitForBridge(manifest: IdentityManifest, timeoutMs: number, reactivate?: () => Promise<void>): Promise<BridgeReadiness> {
     const deadline = Date.now() + timeoutMs;
+    // MV3 service workers are event-driven: the first connectNative attempt
+    // usually runs before the Native Host allow-list matches the extension id
+    // (registered right after provisioning), and the reconnect timer dies with
+    // the idle worker. Re-running loadUnpacked on the same path triggers
+    // onInstalled, which restarts the worker and re-runs top-level
+    // connectBridge against the now-registered host. The polling loop below
+    // does this periodically until the identity handshake lands or times out.
+    const reactivateIntervalMs = Math.min(2_000, Math.max(250, Math.floor(timeoutMs / 3)));
+    let nextReactivateAt = Date.now() + reactivateIntervalMs;
     let readiness = this.bridgeReadiness(manifest);
     while (!readiness.extensionHandshake && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 200));
       readiness = this.bridgeReadiness(manifest);
+      if (!readiness.extensionHandshake && reactivate && Date.now() >= nextReactivateAt) {
+        nextReactivateAt = Date.now() + reactivateIntervalMs;
+        await reactivate();
+      }
     }
     return readiness;
+  }
+
+  /** Re-triggers the extension service worker so it reconnects to the Bridge
+   *  with the registered Native Host. Transient CDP errors are swallowed: the
+   *  polling loop keeps retrying until the bridge timeout. */
+  private async reactivateExtension(transport: ChromeCdpTransport, provision: ManagedExtensionProvisionResult): Promise<void> {
+    try {
+      const loaded = await transport.request<{ id?: string; extensionId?: string }>('Extensions.loadUnpacked', { path: provision.path });
+      const id = loaded.id ?? loaded.extensionId;
+      if (!id || id === provision.extensionId) return;
+      // Chrome derived a different id for the same path (rare). Re-register
+      // the Native Host so the allow-list matches before the worker connects.
+      const registration = this.options.onExtensionProvisioned
+        ? await this.options.onExtensionProvisioned(id)
+        : { ok: false, error: 'onExtensionProvisioned is not configured' };
+      if (registration.ok) provision.extensionId = id;
+    } catch { /* transient CDP errors are retried by the polling loop */ }
   }
 
   private bridgeReadiness(manifest: IdentityManifest): BridgeReadiness {
