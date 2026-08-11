@@ -1,8 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
-import { ChromePipeProcessAdapter } from './chrome-process-adapter.js';
 import { validateManifest } from './health.js';
 import type { IdentityManifest, RuntimeStatus } from './model.js';
 import { IdentityRuntime } from './session.js';
@@ -10,17 +8,15 @@ import { readNetworkIdentityRecord } from './network-observation.js';
 import { runIdentityDoctor } from './windows-doctor.js';
 import { SessionSupervisor, type ManagedSessionSnapshot } from './session-supervisor.js';
 
-/** Chrome's deterministic unpacked-extension id derivation from its path. */
-function unpackedExtensionId(extensionPath: string): string {
-  const hash = createHash('sha256').update(extensionPath, 'utf16le').digest();
-  return [...hash.subarray(0, 16)].map((byte) => String.fromCharCode(97 + (byte >> 4), 97 + (byte & 15))).join('');
-}
-
-/** Idempotently register the Native Host for the managed extension path. */
-function registerNativeHostForExtension(extensionPath: string): { ok: boolean; error?: ConsoleError } {
+/**
+ * Idempotently register the Native Host for the given extension id. The id is
+ * the one Chrome actually reports after provisioning — Chrome derives unpacked
+ * ids from its own path normalization, which is not reproducible locally, so
+ * guessing the id always breaks the native messaging allow-list.
+ */
+function registerNativeHostForExtensionId(extensionPath: string, extensionId: string): { ok: boolean; error?: ConsoleError } {
   const installJs = resolve(extensionPath, '..', '..', 'chrome-bridge', 'dist', 'install.js');
   if (!existsSync(installJs)) return { ok: false, error: { code: 'NATIVE_HOST_INSTALLER_NOT_FOUND', message: `install.js not found: ${installJs}` } };
-  const extensionId = unpackedExtensionId(extensionPath);
   const result = spawnSync(process.execPath, [installJs, 'install', extensionId], {
     encoding: 'utf8',
     timeout: 60_000,
@@ -60,15 +56,27 @@ export class IdentityConsoleService {
     this.legacySetupPath = join(localDir, 'network-identities.setup.json');
     this.logPath = join(localDir, 'operations.json');
     this.runtimeRoot = runtimeRoot;
-    // When the caller does not supply its own runtime, own a CDP-pipe adapter so
-    // managed-extension provisioning (extension handshake) can actually run.
-    // Without it, startIdentity always fails with CDP_PIPE_UNAVAILABLE.
+    // Port mode (no pipe adapter): the identity browser exposes a DevTools
+    // port, and the supervisor connects over WebSocket for managed extension
+    // provisioning. The extension is loaded via --load-extension when
+    // available and re-provisioned through CDP otherwise.
     if (runtime) {
       this.runtime = runtime;
     } else {
-      const adapter = new ChromePipeProcessAdapter();
-      this.runtime = new IdentityRuntime(runtimeRoot, adapter);
-      this.supervisor = new SessionSupervisor(runtimeRoot, { runtime: this.runtime, processAdapter: adapter, ...supervisorOptions });
+      this.runtime = new IdentityRuntime(runtimeRoot);
+      this.supervisor = new SessionSupervisor(runtimeRoot, {
+        runtime: this.runtime,
+        ...supervisorOptions,
+        // Register the Native Host with the id Chrome actually reports after
+        // provisioning. Guessing the id breaks the native messaging allow-list
+        // and the extension handshake can never complete (BRIDGE_NOT_READY).
+        onExtensionProvisioned: supervisorOptions.extensionPath
+          ? async (extensionId: string) => {
+              const registered = registerNativeHostForExtensionId(supervisorOptions.extensionPath!, extensionId);
+              return registered.ok ? { ok: true } : { ok: false, error: registered.error?.message };
+            }
+          : undefined,
+      });
     }
   }
 
@@ -109,16 +117,9 @@ export class IdentityConsoleService {
   async startIdentity(identityId: string): Promise<ConsoleOperationResult> {
     const manifest = this.get(identityId);
     if (this.supervisor) {
-      // The managed extension is provisioned into the identity profile via CDP;
-      // Chrome derives its unpacked extension id from the extension path. The
-      // Native Host manifest must allow-list exactly that id or the extension
-      // handshake can never complete. Register it idempotently up front.
-      const register = this.supervisorOptions.extensionPath ? registerNativeHostForExtension(this.supervisorOptions.extensionPath) : undefined;
-      if (register && !register.ok) {
-        const error: ConsoleError = { code: register.error?.code ?? 'NATIVE_HOST_REGISTER_FAILED', message: register.error?.message ?? 'Native Host registration failed.' };
-        this.log('startIdentity', identityId, false, error.code, error.message);
-        return { ok: false, identity: this.toConsoleIdentity(manifest, error), error };
-      }
+      // The managed extension is provisioned via CDP inside supervisor.start;
+      // the Native Host is then registered with the id Chrome actually reports
+      // (see onExtensionProvisioned in the constructor).
       const result = await this.supervisor.start(manifest);
       const error = result.snapshot.error;
       this.log('startIdentity', identityId, result.ok, error?.code, error?.message);
