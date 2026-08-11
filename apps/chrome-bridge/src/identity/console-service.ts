@@ -1,11 +1,36 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
+import { join, resolve } from 'node:path';
+import { ChromePipeProcessAdapter } from './chrome-process-adapter.js';
 import { validateManifest } from './health.js';
 import type { IdentityManifest, RuntimeStatus } from './model.js';
 import { IdentityRuntime } from './session.js';
 import { readNetworkIdentityRecord } from './network-observation.js';
 import { runIdentityDoctor } from './windows-doctor.js';
 import { SessionSupervisor, type ManagedSessionSnapshot } from './session-supervisor.js';
+
+/** Chrome's deterministic unpacked-extension id derivation from its path. */
+function unpackedExtensionId(extensionPath: string): string {
+  const hash = createHash('sha256').update(extensionPath, 'utf16le').digest();
+  return [...hash.subarray(0, 16)].map((byte) => String.fromCharCode(97 + (byte >> 4), 97 + (byte & 15))).join('');
+}
+
+/** Idempotently register the Native Host for the managed extension path. */
+function registerNativeHostForExtension(extensionPath: string): { ok: boolean; error?: ConsoleError } {
+  const installJs = resolve(extensionPath, '..', '..', 'chrome-bridge', 'dist', 'install.js');
+  if (!existsSync(installJs)) return { ok: false, error: { code: 'NATIVE_HOST_INSTALLER_NOT_FOUND', message: `install.js not found: ${installJs}` } };
+  const extensionId = unpackedExtensionId(extensionPath);
+  const result = spawnSync(process.execPath, [installJs, 'install', extensionId], {
+    encoding: 'utf8',
+    timeout: 60_000,
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+  });
+  if (result.status !== 0) {
+    return { ok: false, error: { code: 'NATIVE_HOST_REGISTER_FAILED', message: (result.stderr || result.stdout || '').slice(0, 300) } };
+  }
+  return { ok: true };
+}
 
 export type ConsoleStatus = 'not-started' | 'starting' | 'running' | 'stopped' | 'failed' | 'frozen' | 'unverified' | 'warning';
 export interface ConsoleLog { operation: string; identityId?: string; startedAt: string; completedAt: string; ok: boolean; errorCode?: string; errorMessage?: string; }
@@ -35,8 +60,16 @@ export class IdentityConsoleService {
     this.legacySetupPath = join(localDir, 'network-identities.setup.json');
     this.logPath = join(localDir, 'operations.json');
     this.runtimeRoot = runtimeRoot;
-    this.runtime = runtime ?? new IdentityRuntime(runtimeRoot);
-    if (!runtime) this.supervisor = new SessionSupervisor(runtimeRoot, { runtime: this.runtime, ...supervisorOptions });
+    // When the caller does not supply its own runtime, own a CDP-pipe adapter so
+    // managed-extension provisioning (extension handshake) can actually run.
+    // Without it, startIdentity always fails with CDP_PIPE_UNAVAILABLE.
+    if (runtime) {
+      this.runtime = runtime;
+    } else {
+      const adapter = new ChromePipeProcessAdapter();
+      this.runtime = new IdentityRuntime(runtimeRoot, adapter);
+      this.supervisor = new SessionSupervisor(runtimeRoot, { runtime: this.runtime, processAdapter: adapter, ...supervisorOptions });
+    }
   }
 
   listIdentities(): ConsoleIdentity[] {
@@ -76,6 +109,16 @@ export class IdentityConsoleService {
   async startIdentity(identityId: string): Promise<ConsoleOperationResult> {
     const manifest = this.get(identityId);
     if (this.supervisor) {
+      // The managed extension is provisioned into the identity profile via CDP;
+      // Chrome derives its unpacked extension id from the extension path. The
+      // Native Host manifest must allow-list exactly that id or the extension
+      // handshake can never complete. Register it idempotently up front.
+      const register = this.supervisorOptions.extensionPath ? registerNativeHostForExtension(this.supervisorOptions.extensionPath) : undefined;
+      if (register && !register.ok) {
+        const error: ConsoleError = { code: register.error?.code ?? 'NATIVE_HOST_REGISTER_FAILED', message: register.error?.message ?? 'Native Host registration failed.' };
+        this.log('startIdentity', identityId, false, error.code, error.message);
+        return { ok: false, identity: this.toConsoleIdentity(manifest, error), error };
+      }
       const result = await this.supervisor.start(manifest);
       const error = result.snapshot.error;
       this.log('startIdentity', identityId, result.ok, error?.code, error?.message);

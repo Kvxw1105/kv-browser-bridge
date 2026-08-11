@@ -6,6 +6,11 @@ import type { IdentityManifest } from '../shared/identity-manifest';
 
 declare global {
   interface Window {
+    computerStatus: {
+      doctor(): Promise<{ ok: true; data: unknown } | { ok: false; error: { code: string; message: string } }>;
+      status(): Promise<{ ok: true; data: unknown } | { ok: false; error: { code: string; message: string } }>;
+      bridge(): Promise<{ ok: true; data: { doctor?: unknown; status?: unknown; bridge: { present: boolean; protocolVersion?: number; pipeName?: string; pid?: number; startedAt?: string; extensionPath?: string; extensionPresent: boolean }; computerUseDir?: string; error?: { code: string; message: string } } } | { ok: false; error: { code: string; message: string } }>;
+    };
     identityConsole: {
       list(): Promise<IdentityConsoleApiResult<IdentityConsoleItem[]>>;
       status(identityId: string): Promise<IdentityConsoleApiResult<IdentityConsoleItem>>;
