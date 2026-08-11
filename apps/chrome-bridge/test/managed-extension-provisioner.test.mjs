@@ -24,7 +24,28 @@ test('loads and verifies an unpacked extension through the CDP domain', async ()
     return {};
   } }, path);
   assert.equal(result.ok, true);
-  assert.deepEqual(calls.map((call) => call.method), ['Extensions.getExtensions', 'Extensions.uninstall', 'Extensions.loadUnpacked', 'Extensions.getExtensions', 'Target.createTarget']);
+  // Already-listed enabled extensions are reused (no uninstall+reload) and
+  // only activated; the fresh-path activation target is not reported.
+  assert.deepEqual(calls.map((call) => call.method), ['Extensions.getExtensions', 'Target.createTarget']);
+  assert.equal(result.extensionId, 'abcdefghijklmnopabcdefghijklmnop');
+  assert.equal(result.activationTargetId, undefined);
+});
+
+test('loads a fresh extension when it is not listed yet', async () => {
+  const path = fixture();
+  const calls = [];
+  const result = await provisionManagedExtension({ request: async (method) => {
+    calls.push(method);
+    if (method === 'Extensions.loadUnpacked') return { id: 'abcdefghijklmnopabcdefghijklmnop' };
+    if (method === 'Extensions.getExtensions') return { extensions: [] };
+    if (method === 'Target.createTarget') return { targetId: 'activation-target' };
+    return {};
+  } }, path);
+  assert.equal(result.ok, true);
+  // Fresh path: loadUnpacked is authoritative when getExtensions returns an
+  // empty list (current Chrome versions do this); activation still runs.
+  assert.deepEqual(calls, ['Extensions.getExtensions', 'Extensions.loadUnpacked', 'Extensions.getExtensions', 'Target.createTarget']);
+  assert.equal(result.extensionId, 'abcdefghijklmnopabcdefghijklmnop');
   assert.equal(result.activationTargetId, 'activation-target');
 });
 

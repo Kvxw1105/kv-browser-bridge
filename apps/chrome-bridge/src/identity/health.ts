@@ -14,6 +14,10 @@ export function validateManifest(manifest: IdentityManifest): HealthReport {
   const findings: HealthFinding[] = [];
   if (manifest.schemaVersion !== 1) findings.push(error('SCHEMA_VERSION', 'Unsupported identity schema version.'));
   if (!/^[a-z0-9][a-z0-9-]{2,63}$/.test(manifest.identityId)) findings.push(error('IDENTITY_ID', 'identityId must be a stable lowercase slug.'));
+  // The Bridge process re-derives the identity from environment variables and
+  // fails hard on invalid slugs (bridge-context IDENTITY_SLUG); validate here
+  // so a bad manifest is rejected before a session starts.
+  if (!/^[a-z0-9][a-z0-9-]{2,63}$/.test(manifest.workspaceId)) findings.push(error('WORKSPACE_ID', 'workspaceId must be a stable lowercase slug.'));
   if (!manifest.browser.executablePath) findings.push(error('BROWSER_PATH', 'Browser executable path is required.'));
   if (!manifest.browser.userDataDir) findings.push(error('USER_DATA_DIR', 'A dedicated userDataDir is required.'));
   if (manifest.proxy.port < 1 || manifest.proxy.port > 65535) findings.push(error('PROXY_PORT', 'Proxy port is outside the valid range.'));
