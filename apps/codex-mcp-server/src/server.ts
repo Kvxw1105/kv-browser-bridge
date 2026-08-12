@@ -239,6 +239,7 @@ server.tool('browser_click', 'Click one element using exactly one CSS selector o
   ...{ tabId },
   ...locator,
   allowCommentSend: z.literal(true).optional().describe('Allow only a comment-composer button whose exact text is 发送. Final publish controls remain blocked.'),
+  allowChatSend: z.literal(true).optional().describe('Allow only a chat-composer send button (text 发送/Send next to the input composer), e.g. for the KvGo engine. Final publish controls remain blocked.'),
   timeoutMs: z.number().int().positive().max(120_000).optional(),
 }, async ({ timeoutMs, ...params }) => callBridge('browser_click', params, timeoutMs));
 

@@ -61,32 +61,75 @@ async function loadDecisionConfig(): Promise<LlmDecisionEngineOptions | null> {
   }
 }
 
-const EXPR = {
-  chatgptBusy: `(() => { const el = document.querySelector('button[data-testid="stop-button"]'); return !!el && el.offsetParent !== null; })()`,
-  chatgptLast: `(() => { const n = document.querySelectorAll('[data-message-author-role="assistant"]'); return n.length ? n[n.length - 1].innerText : ''; })()`,
-  deepseekBusy: `(() => [...document.querySelectorAll('button')].some(b => b.textContent.trim() === '■' && b.offsetParent !== null))()`,
-  deepseekLast: `(() => { const list = document.querySelector('.ds-virtual-list-visible-items'); if (!list) return ''; const n = list.children; return n.length ? n[n.length - 1].innerText : ''; })()`,
-  risk: `(() => {
-    const iframes = ['iframe[src*="captcha"]','iframe[src*="recaptcha"]','iframe[src*="hcaptcha"]','iframe[src*="turnstile"]','iframe[src*="challenges.cloudflare"]'];
+export interface GoPlatformSelectors {
+  input: string;
+  /** Send control (clicked to submit a nudge; React handles synthetic clicks). */
+  sendButton: string;
+  busyExpr: string;
+  lastExpr: string;
+  riskTexts: string[];
+}
+
+/** Platform selectors are page-DOM specific and change when ChatGPT/DeepSeek
+ *  ship UI updates. They are centralized here and overridable per GoEngine
+ *  via config (see BridgePageAdapter constructor). */
+export function defaultPlatformSelectors(): Record<Platform, GoPlatformSelectors> {
+  return {
+    chatgpt: {
+      input: '#prompt-textarea',
+      sendButton: 'button[data-testid="send-button"]',
+      busyExpr: `(() => { const el = document.querySelector('button[data-testid="stop-button"]'); return !!el && el.offsetParent !== null; })()`,
+      lastExpr: `(() => { const n = document.querySelectorAll('[data-message-author-role="assistant"]'); return n.length ? n[n.length - 1].innerText : ''; })()`,
+      riskTexts: ['请完成验证', '安全验证', '验证码已发送', 'unusual activity', 'verify you are human', '确认您不是机器人', '检测到异常流量'],
+    },
+    deepseek: {
+      input: 'textarea[placeholder*="给 DeepSeek 发送消息"]',
+      sendButton: 'button[aria-label*="发送"], button[title*="发送"]',
+      busyExpr: `(() => [...document.querySelectorAll('button')].some(b => b.textContent.trim() === '■' && b.offsetParent !== null))()`,
+      lastExpr: `(() => { const list = document.querySelector('.ds-virtual-list-visible-items'); if (!list) return ''; const n = list.children; return n.length ? n[n.length - 1].innerText : ''; })()`,
+      riskTexts: ['请完成验证', '安全验证', '验证码已发送', 'unusual activity', 'verify you are human', '确认您不是机器人', '检测到异常流量'],
+    },
+  };
+}
+
+const RISK_IFRAMES = ['iframe[src*="captcha"]', 'iframe[src*="recaptcha"]', 'iframe[src*="hcaptcha"]', 'iframe[src*="turnstile"]', 'iframe[src*="challenges.cloudflare"]'];
+
+function riskExpr(texts: string[]): string {
+  const list = JSON.stringify(texts);
+  return `(() => {
+    const iframes = ${JSON.stringify(RISK_IFRAMES)};
     for (const sel of iframes) { const el = document.querySelector(sel); if (el && el.offsetParent !== null) return JSON.stringify({ risk: '验证码框架:' + sel }); }
-    const texts = ['请完成验证','安全验证','验证码已发送','unusual activity','verify you are human','确认您不是机器人','检测到异常流量'];
+    const texts = ${list};
     const t = document.body ? document.body.innerText : '';
     for (const k of texts) { if (t.includes(k)) return JSON.stringify({ risk: k }); }
     return JSON.stringify({ risk: null });
-  })()`,
-};
+  })()`;
+}
 
 class BridgePageAdapter implements PageAdapter {
   private _platform: Platform = 'deepseek';
-  private readonly inputSels: Record<Platform, string> = {
-    chatgpt: '#prompt-textarea',
-    deepseek: 'textarea[placeholder*="给 DeepSeek 发送消息"]',
-  };
+  private failures = 0;
+  private readonly selectors: Record<Platform, GoPlatformSelectors>;
 
   constructor(
     private readonly invoke: BridgeInvoker,
     private readonly tabId: number,
-  ) {}
+    overrides?: Partial<Record<Platform, GoPlatformSelectors>>,
+  ) {
+    this.selectors = { ...defaultPlatformSelectors(), ...(overrides ?? {}) };
+  }
+
+  recentFailureCount(): number {
+    return this.failures;
+  }
+
+  private ok(): void {
+    this.failures = 0;
+  }
+
+  private fail(): void {
+    this.failures += 1;
+  }
 
   get platform(): Platform {
     return this._platform;
@@ -105,23 +148,29 @@ class BridgePageAdapter implements PageAdapter {
   }
 
   private async evaluate(expression: string): Promise<unknown> {
-    const r = (await this.invoke('browser_evaluate', { tabId: this.tabId, expression })) as {
-      result?: { value?: unknown };
-    };
-    const value = r?.result?.value;
-    if (typeof value === 'string') {
-      try {
-        return JSON.parse(value);
-      } catch {
-        return value;
+    try {
+      const r = (await this.invoke('browser_evaluate', { tabId: this.tabId, expression })) as {
+        result?: { value?: unknown };
+      };
+      const value = r?.result?.value;
+      if (typeof value === 'string') {
+        try {
+          return JSON.parse(value);
+        } catch {
+          return value;
+        }
       }
+      this.ok();
+      return value;
+    } catch {
+      this.fail();
+      throw new Error('bridge evaluate failed');
     }
-    return value;
   }
 
   async isBusy(): Promise<boolean> {
     try {
-      const v = await this.evaluate(this._platform === 'chatgpt' ? EXPR.chatgptBusy : EXPR.deepseekBusy);
+      const v = await this.evaluate(this.selectors[this._platform].busyExpr);
       return v === true;
     } catch {
       return false;
@@ -130,7 +179,7 @@ class BridgePageAdapter implements PageAdapter {
 
   async lastText(): Promise<string> {
     try {
-      const v = await this.evaluate(this._platform === 'chatgpt' ? EXPR.chatgptLast : EXPR.deepseekLast);
+      const v = await this.evaluate(this.selectors[this._platform].lastExpr);
       return typeof v === 'string' ? v : '';
     } catch {
       return '';
@@ -139,7 +188,7 @@ class BridgePageAdapter implements PageAdapter {
 
   async detectRisk(): Promise<string | null> {
     try {
-      const v = (await this.evaluate(EXPR.risk)) as { risk?: string | null } | null;
+      const v = (await this.evaluate(riskExpr(this.selectors[this._platform].riskTexts))) as { risk?: string | null } | null;
       return v && typeof v.risk === 'string' ? v.risk : null;
     } catch {
       return null;
@@ -150,7 +199,7 @@ class BridgePageAdapter implements PageAdapter {
     try {
       await this.invoke('browser_type', {
         tabId: this.tabId,
-        selector: this.inputSels[this._platform],
+        selector: this.selectors[this._platform].input,
         text,
         clear: true,
       });
@@ -161,6 +210,15 @@ class BridgePageAdapter implements PageAdapter {
   }
 
   async send(): Promise<boolean> {
+    // Prefer the platform send button: synthetic clicks are handled by React
+    // event delegation, while CDP keyboard injection is dropped by Chrome
+    // when the window has no OS focus (background/unattended runs).
+    try {
+      await this.invoke('browser_click', { tabId: this.tabId, selector: this.selectors[this._platform].sendButton, allowChatSend: true });
+      return true;
+    } catch {
+      /* fall through to Enter */
+    }
     try {
       await this.invoke('browser_press', { tabId: this.tabId, key: 'Enter' });
       return true;

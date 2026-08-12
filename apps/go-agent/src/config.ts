@@ -14,6 +14,7 @@ export function createDefaultConfig(): GoConfig {
     cooldownMaxMs: 90000,
     charMinMs: 40,
     charMaxMs: 180,
+    bridgeFailureStopCount: 5,
     nudgePool: [
       '请继续推进当前任务，不要停下来。',
       '接着完成剩余部分，保持当前质量水平。',

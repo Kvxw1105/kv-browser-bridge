@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import { MY_TAB_ID, sendToTab } from '../tab';
-import { KvGoPanel } from './KvGoPanel';
 
 type BridgeState = 'connecting' | 'connected' | 'disconnected';
 type BrowserTab = { id: number; title: string; url: string; active: boolean; favicon: string };
@@ -277,7 +276,6 @@ export function LocalBridgePanel() {
         </section>
       </div>
 
-      <KvGoPanel targetTabId={targetTabId} chinese={chinese} />
 
       <section className="local-bridge-panel__tabs" aria-labelledby="tabs-heading">
         <div className="local-bridge-panel__tabs-header">

@@ -62,6 +62,7 @@ export class GoEngine {
       round: 0,
       nudgeCount: 0,
       goal: '',
+      lastText: '',
       lastLen: -1,
       lastStableAt: 0,
       lastNudgeAt: 0,
@@ -91,8 +92,9 @@ export class GoEngine {
     this.state.startedAt = Date.now();
     this.state.round = 0;
     this.state.nudgeCount = 0;
-    const initialLen = (await this.adapter.lastText()).length;
-    this.state.lastLen = initialLen > 0 ? initialLen : -1;
+    const initialText = await this.adapter.lastText();
+    this.state.lastText = initialText;
+    this.state.lastLen = initialText.length > 0 ? initialText.length : -1;
     this.state.lastStableAt = Date.now();
     this.state.lastNudgeAt = 0;
     this.state.lastSummary = '';
@@ -130,8 +132,9 @@ export class GoEngine {
     }
 
     if (!this.state.running) return;
-    const postLen = (await this.adapter.lastText()).length;
-    this.state.lastLen = postLen > 0 ? postLen : this.state.lastLen;
+    const postText = await this.adapter.lastText();
+    this.state.lastText = postText;
+    this.state.lastLen = postText.length > 0 ? postText.length : this.state.lastLen;
     this.state.lastStableAt = Date.now();
     await this.tick();
   }
@@ -153,8 +156,9 @@ export class GoEngine {
   async resume(options: { goal?: string } = {}): Promise<void> {
     if (options.goal !== undefined) this.state.goal = options.goal;
     this.state.running = true;
-    const resumeLen = (await this.adapter.lastText()).length;
-    this.state.lastLen = resumeLen > 0 ? resumeLen : this.state.lastLen;
+    const resumeText = await this.adapter.lastText();
+    this.state.lastText = resumeText;
+    this.state.lastLen = resumeText.length > 0 ? resumeText.length : this.state.lastLen;
     this.state.lastStableAt = Date.now();
     this.state.phase = 'waiting';
     this.state.nextActionAt = Date.now() + this.config.idleThresholdMs;
@@ -193,6 +197,14 @@ export class GoEngine {
     if (!this.state.running) return;
     if ((this.hooks.hidden ? this.hooks.hidden() : typeof document !== 'undefined' && document.hidden)) return;
 
+    // A Bridge that stops answering (Chrome closed, native messaging down)
+    // must stop the loop instead of spinning forever against a dead link.
+    const failureCount = this.adapter.recentFailureCount ? this.adapter.recentFailureCount() : 0;
+    if (failureCount >= this.config.bridgeFailureStopCount) {
+      this.stop(`桥连接中断（连续 ${failureCount} 次读取失败），请检查 Chrome 与 Bridge 连接后重试`);
+      return;
+    }
+
     const risk = await this.riskDetector.detect();
     if (risk) {
       this.stop(`风控/验证码出现，已自动停止（${risk}）`);
@@ -212,14 +224,18 @@ export class GoEngine {
       this.state.generationSeen = true;
       this.state.phase = 'generating';
       this.state.nextActionAt = 0;
-      const stalled = len === this.state.lastLen && now - this.state.busySince > this.config.busyStallMs;
+      const stalled = text === this.state.lastText && now - this.state.busySince > this.config.busyStallMs;
       if (!stalled) return;
-      // 生成停滞：停止按钮可见但文本长时间不增长，视为停住
+      // 生成停滞：停止按钮可见但文本长时间不增长。停滞不是"完成一轮"——
+      // 清掉 busy 状态后返回，下一轮按"未完成"路径自然进入催办分支，
+      // 避免被误计为一次完成轮次。
       this.state.lastBusy = false;
       this.state.lastStableAt = now;
+      return;
     }
 
-    if (len > this.state.lastLen) {
+    if (text !== this.state.lastText) {
+      this.state.lastText = text;
       this.state.lastLen = len;
       this.state.lastStableAt = now;
       this.state.lastBusy = false;
@@ -323,8 +339,11 @@ export class GoEngine {
       this.hooks.status('推进失败：输入框未找到，请检查页面');
       return false;
     }
-    const readLen = (await this.adapter.lastText()).length;
-    if (readLen > 0) this.state.lastLen = readLen;
+    const readText = await this.adapter.lastText();
+    if (readText.length > 0) {
+      this.state.lastText = readText;
+      this.state.lastLen = readText.length;
+    }
     this.state.lastStableAt = Date.now();
     return true;
   }
@@ -361,7 +380,7 @@ export class GoEngine {
 
 export function atCheckpoint(text: string, config: GoConfig): boolean {
   const kw = (config.keyword || '').trim() || config.defaultKeywords.join('|');
-  const re = new RegExp(kw.split('|').map(escapeRegExp).join('|'));
+  const re = new RegExp(kw.split('|').map(escapeRegExp).join('|'), 'i');
   return re.test(text);
 }
 

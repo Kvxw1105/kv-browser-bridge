@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { KvGoPanel } from './sidepanel/components/KvGoPanel';
 import './sidepanel/styles.css';
 import './popup.css';
 
@@ -109,7 +108,6 @@ function Popup() {
           <small>{zh ? `\u6b63\u5728\u7b2c ${reconnectAttempt} \u6b21\u91cd\u8fde` : `Reconnect attempt ${reconnectAttempt}`}</small>
         )}
       </section>
-      <KvGoPanel targetTabId={tabId} chinese={zh} />
     </main>
   );
 }

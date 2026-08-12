@@ -53,3 +53,59 @@ test('MemoryStorage 保存/读取状态', async () => {
   assert.equal(loaded?.lastSummary, 's');
   assert.equal(loaded?.goal, '写一个 CLI');
 });
+
+test('busy stall is not counted as a completed round', async () => {
+  const { GoEngine } = await import('../src/core.js');
+  const { createDefaultConfig } = await import('../src/config.js');
+  const { MemoryStorage } = await import('../src/storage.js');
+  let text = '第 1 轮回复内容（未完成）';
+  let busy = false;
+  let nudgeCount = 0;
+  const adapter = {
+    platform: 'deepseek',
+    isBusy: async () => busy,
+    lastText: async () => text,
+    typeText: async () => { nudgeCount += 1; return true; },
+    send: async () => true,
+    recentFailureCount: () => 0,
+  };
+  const engine = new GoEngine(adapter, { status: () => undefined, notify: () => undefined }, new MemoryStorage(), {
+    config: { ...createDefaultConfig(), pollMinMs: 5, pollMaxMs: 10, busyStallMs: 40, idleThresholdMs: 30, cooldownMinMs: 15, cooldownMaxMs: 20, maxRounds: 3, injectProtocol: false },
+  });
+  await engine.start({ maxRounds: 3, injectProtocol: false });
+  // 进入生成中（busy 出现）→ 文本停滞超过 busyStallMs
+  busy = true;
+  await new Promise((r) => setTimeout(r, 70));
+  assert.equal(engine.getState().round, 0, 'stall 不得被计为完成一轮');
+  // 生成恢复：文本增长 → 完成后到达 idle → 下一轮 nudge 仍可用
+  busy = false;
+  text = '第 1 轮回复内容（未完成）\n【进度摘要】\n已完成：部分';
+  await new Promise((r) => setTimeout(r, 20));
+  await engine.stop('测试结束');
+});
+
+test('engine stops after consecutive adapter failures', async () => {
+  const { GoEngine } = await import('../src/core.js');
+  const { createDefaultConfig } = await import('../src/config.js');
+  const { MemoryStorage } = await import('../src/storage.js');
+  let failures = 0;
+  const adapter = {
+    platform: 'deepseek',
+    isBusy: async () => { failures += 1; return false; },
+    lastText: async () => { failures += 1; return ''; },
+    typeText: async () => false,
+    send: async () => false,
+    recentFailureCount: () => failures,
+  };
+  const engine = new GoEngine(adapter, { status: () => undefined, notify: () => undefined }, new MemoryStorage(), {
+    config: { ...createDefaultConfig(), pollMinMs: 5, pollMaxMs: 10, bridgeFailureStopCount: 3, injectProtocol: false },
+  });
+  await engine.start({ maxRounds: 10, injectProtocol: false });
+  const deadline = Date.now() + 1500;
+  while (engine.getState().running && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  assert.equal(engine.getState().running, false);
+  assert.match(engine.getState().lastStopReason, /桥连接中断/);
+  engine.stop('cleanup');
+});

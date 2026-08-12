@@ -18,6 +18,8 @@ export interface GoConfig {
   injectProtocol: boolean;
   summaryMarker: string;
   doneMarker: string;
+  /** Consecutive adapter read failures after which the loop stops itself. */
+  bridgeFailureStopCount: number;
 }
 
 export interface PersistedState {
@@ -31,6 +33,8 @@ export interface PersistedState {
 
 export interface GoState extends PersistedState {
   goal: string;
+  /** Full last-read page text; content change (not length) drives the loop. */
+  lastText: string;
   lastLen: number;
   lastStableAt: number;
   lastNudgeAt: number;
@@ -52,6 +56,9 @@ export interface PageAdapter {
   typeText(text: string): Promise<boolean>;
   send(): Promise<boolean>;
   detectRisk?(): string | null | Promise<string | null>;
+  /** Count of consecutive failed reads (Bridge unreachable). Optional; the
+   *  engine stops the loop when it reaches bridgeFailureStopCount. */
+  recentFailureCount?(): number;
 }
 
 export interface GoHooks {
