@@ -1,0 +1,33 @@
+name: Desktop Console CI
+
+on:
+  pull_request:
+    paths:
+      - 'apps/desktop/**'
+      - 'apps/chrome-bridge/src/identity/**'
+      - 'apps/chrome-bridge/test/console-service.test.mjs'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/desktop-console-ci.yml'
+  workflow_dispatch:
+
+jobs:
+  desktop-console:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Build identity runtime
+        run: npm run build -w packages/browser-protocol -w apps/chrome-bridge
+      - name: Test identity console service
+        run: node --test apps/chrome-bridge/test/console-service.test.mjs
+      - name: Typecheck desktop
+        run: npm run build -w packages/shared -w packages/agent-core && npm run typecheck -w apps/desktop
+      - name: Build desktop
+        run: npm run build -w apps/desktop

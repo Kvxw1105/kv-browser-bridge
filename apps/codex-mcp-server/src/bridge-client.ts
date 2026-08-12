@@ -68,7 +68,6 @@ function configPaths(): string[] {
   if (explicit) return [explicit];
   return [
     join(appData, 'KvBrowserBridge', 'bridge.json'),
-    // Read the previous location as a compatibility fallback for active clients.
     join(appData, 'CodexLocalChrome', 'bridge.json'),
   ];
 }
@@ -86,7 +85,6 @@ async function loadConfig(): Promise<{ endpoint: string; token: string }> {
     endpoint: process.env.KV_BROWSER_BRIDGE_PIPE ?? process.env.LOCAL_CHROME_PIPE,
     token: process.env.KV_BROWSER_BRIDGE_TOKEN ?? process.env.LOCAL_CHROME_TOKEN,
   };
-
   let fromFile: BridgeConfig = {};
   if (!fromEnvironment.endpoint || !fromEnvironment.token) {
     const candidates: BridgeConfig[] = [];
@@ -107,12 +105,9 @@ async function loadConfig(): Promise<{ endpoint: string; token: string }> {
       );
     }
   }
-
   const endpoint = fromEnvironment.endpoint ?? fromFile.pipeName ?? fromFile.endpoint;
   const token = fromEnvironment.token ?? fromFile.token;
-  if (!endpoint || !token) {
-    throw new BridgeError('BRIDGE_UNAVAILABLE', 'Chrome Bridge configuration is missing pipeName or token.', true);
-  }
+  if (!endpoint || !token) throw new BridgeError('BRIDGE_UNAVAILABLE', 'Chrome Bridge configuration is missing pipeName or token.', true);
   return { endpoint, token };
 }
 
@@ -143,6 +138,8 @@ export class BridgeClient {
   private bridgeStatus: unknown;
   private sessionId: string | undefined;
   private readonly writeQueue = new PerTabWriteQueue();
+  private suppressNextReconnect = false;
+  private reconnectEnabled = true;
 
   private readonly identity: ClientIdentity;
 
@@ -151,7 +148,7 @@ export class BridgeClient {
   }
 
   getStatus(): BridgeStatus {
-    const bridge = this.bridgeStatus as { extensionConnected?: unknown; nativeReady?: unknown; lastExtensionMessageAt?: unknown } | undefined;
+    const bridge = this.bridgeStatus as { extensionConnected?: unknown; nativeReady?: unknown } | undefined;
     const socketReady = this.socket !== null && !this.socket.destroyed && this.authenticated;
     const health = healthState(socketReady, bridge as { extensionConnected?: boolean; nativeReady?: boolean } | undefined);
     return {
@@ -168,11 +165,9 @@ export class BridgeClient {
   }
 
   async request(method: string, params: Record<string, unknown> = {}, timeoutMs = this.options.requestTimeoutMs): Promise<unknown> {
+    this.reconnectEnabled = true;
     await this.ensureConnected();
-    if (!this.socket || !this.authenticated) {
-      throw new BridgeError('BRIDGE_UNAVAILABLE', 'Chrome Bridge is not connected.', true);
-    }
-
+    if (!this.socket || !this.authenticated) throw new BridgeError('BRIDGE_UNAVAILABLE', 'Chrome Bridge is not connected.', true);
     const operationClass = operationClassForMethod(method);
     const tabId = typeof params.tabId === 'number' ? params.tabId : undefined;
     const idempotencyKey = typeof params.idempotencyKey === 'string' ? params.idempotencyKey : crypto.randomUUID();
@@ -192,11 +187,27 @@ export class BridgeClient {
     });
   }
 
-  async close(): Promise<void> {
+  /** Reset the active route without allowing the old socket close event to reconnect. */
+  async reset(): Promise<void> {
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
-    this.socket?.destroy();
+    const socket = this.socket;
+    this.suppressNextReconnect = Boolean(socket && !socket.destroyed);
     this.socket = null;
+    this.connection = null;
+    this.authenticated = false;
+    this.endpoint = undefined;
+    this.token = undefined;
+    this.buffer = '';
+    this.bridgeStatus = undefined;
+    this.sessionId = undefined;
+    this.rejectPending(new BridgeError('BRIDGE_UNAVAILABLE', 'Chrome Bridge route was reset.', true));
+    socket?.destroy();
+  }
+
+  async close(): Promise<void> {
+    this.reconnectEnabled = false;
+    await this.reset();
   }
 
   private async ensureConnected(): Promise<void> {
@@ -205,8 +216,6 @@ export class BridgeClient {
     try {
       await this.connection;
     } catch (error) {
-      // A missing Bridge during MCP startup is normal. Keep retrying in the
-      // background while returning the classified error to the current tool.
       this.scheduleReconnect();
       throw error;
     } finally {
@@ -219,7 +228,6 @@ export class BridgeClient {
     this.endpoint = config.endpoint;
     this.token = config.token;
     this.options.log('bridge_connecting', { endpoint: this.endpoint });
-
     await new Promise<void>((resolve, reject) => {
       const socket = createConnection({ path: this.endpoint! });
       let settled = false;
@@ -238,7 +246,6 @@ export class BridgeClient {
         resolve();
       });
     });
-
     try {
       await this.hello();
       this.authenticated = true;
@@ -247,6 +254,7 @@ export class BridgeClient {
       this.lastError = undefined;
       this.options.log('bridge_connected', { endpoint: this.endpoint });
     } catch (error) {
+      this.suppressNextReconnect = true;
       this.socket?.destroy();
       this.socket = null;
       this.authenticated = false;
@@ -278,9 +286,7 @@ export class BridgeClient {
   }
 
   private requestRaw(method: string, params: Record<string, unknown>, timeoutMs: number): Promise<unknown> {
-    if (!this.socket || this.socket.destroyed) {
-      return Promise.reject(new BridgeError('BRIDGE_UNAVAILABLE', 'Chrome Bridge socket is unavailable.', true));
-    }
+    if (!this.socket || this.socket.destroyed) return Promise.reject(new BridgeError('BRIDGE_UNAVAILABLE', 'Chrome Bridge socket is unavailable.', true));
     const id = crypto.randomUUID();
     return new Promise<unknown>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -354,27 +360,34 @@ export class BridgeClient {
     const error = new BridgeError('BRIDGE_PROTOCOL_ERROR', message, true);
     this.recordError(error);
     this.socket?.destroy();
-    this.handleDisconnect();
   }
 
   private handleDisconnect(): void {
+    if (this.suppressNextReconnect) {
+      this.suppressNextReconnect = false;
+      return;
+    }
     const wasConnected = this.socket !== null;
     this.socket = null;
     this.authenticated = false;
     const error = new BridgeError('BRIDGE_UNAVAILABLE', 'Chrome Bridge connection closed.', true);
-    for (const pending of this.pending.values()) {
-      clearTimeout(pending.timer);
-      pending.reject(pending.operationClass === 'non_idempotent_write'
-        ? new BridgeError('UNKNOWN_OUTCOME', `${pending.method} may have completed before the Chrome Bridge disconnected.`, false)
-        : error);
-    }
-    this.pending.clear();
+    this.rejectPending(error);
     if (wasConnected) this.recordError(error);
     this.scheduleReconnect();
   }
 
+  private rejectPending(readError: BridgeError): void {
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(pending.operationClass === 'non_idempotent_write'
+        ? new BridgeError('UNKNOWN_OUTCOME', `${pending.method} may have completed before the Chrome Bridge disconnected.`, false)
+        : readError);
+    }
+    this.pending.clear();
+  }
+
   private scheduleReconnect(): void {
-    if (this.reconnectTimer) return;
+    if (!this.reconnectEnabled || this.reconnectTimer) return;
     const delayMs = Math.min(30_000, 500 * 2 ** Math.min(this.reconnectAttempts, 6));
     this.reconnectAttempts += 1;
     this.options.log('bridge_reconnect_scheduled', { delayMs, attempt: this.reconnectAttempts });

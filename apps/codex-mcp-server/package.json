@@ -1,16 +1,27 @@
 {
   "name": "@kv-browser-bridge/codex-mcp-server",
-  "version": "0.2.13",
+  "version": "0.3.0",
+  "version": "0.3.0",
   "private": true,
-  "description": "Standalone stdio MCP server for a locally connected Chrome Bridge.",
+  "description": "Standalone stdio MCP servers for the local Chrome Bridge and Computer Use runtime.",
   "type": "module",
   "bin": {
-    "kv-browser-bridge-mcp": "./dist/server.js"
+    "kv-browser-bridge-mcp": "./dist/guarded-server.js",
+    "kv-computer-use-mcp": "./dist/computer-server.js",
+    "kv-computer-use-doctor": "./dist/computer-doctor.js",
+    "kv-computer-use-status": "./dist/computer-status.js",
+    "kv-computer-use-codex": "./dist/codex-install.js"
   },
   "scripts": {
     "build": "tsc",
     "check": "tsc --noEmit",
-    "dev": "tsx src/server.ts"
+    "dev": "tsx src/guarded-server.ts",
+    "dev:computer": "tsx src/computer-server.ts",
+    "doctor:computer": "node dist/computer-doctor.js --json",
+    "status:computer": "node dist/computer-status.js --json",
+    "codex:status": "node dist/codex-install.js status",
+    "codex:install": "node dist/codex-install.js install",
+    "codex:uninstall": "node dist/codex-install.js uninstall"
   },
   "dependencies": {
     "@kv-browser-bridge/go-agent": "*",

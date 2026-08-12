@@ -116,6 +116,28 @@ explicitly passes `-Force` after reviewing that file.
 - Optional bookmark, download-status, and extension-inventory permissions are requested only from the extension UI. Extension inventory is read-only.
 - Screenshot files are created only when an MCP request specifies an artifact path. Browser actions can still affect the currently selected tab, so use the bridge only with clients and prompts you trust.
 
+## WebMCP support
+
+Pages that expose WebMCP tools (`navigator.modelContextTesting`) can be driven
+through their own tool interface instead of DOM/CDP simulation:
+
+- `browser_list_webmcp_tools({ tabId })` → `{ available, tools: [{ name, description, inputSchema }], url }`.
+  Pages without WebMCP return `available: false` (never an error) and the
+  regular browser tools keep working unchanged.
+- `browser_execute_webmcp_tool({ tabId, name, input })` → `{ status, result?, error?, toolsAfter?, url }`
+  with `status` in `completed | unavailable | tool_not_found | failed | unknown_outcome`.
+  The tool list is re-checked before execution and re-listed afterwards.
+  `unknown_outcome` (navigation, disconnect, or timeout) is never retried
+  automatically — re-list and re-decide instead.
+
+WebMCP is enabled by default and can be switched off with
+`KV_BROWSER_WEBMCP_DISABLED=1`, which restores the exact pre-WebMCP tool set.
+
+The Bridge executes WebMCP through two fixed, built-in function templates
+(`listTools` / `executeTool`); it never evaluates caller-supplied JavaScript
+and never bypasses the existing final-publish protections. WebMCP is a
+standard browser API — no Cloudflare account or service is required.
+
 ## What Kv Browser Bridge does not do
 
 - It does not provide a hosted/cloud service, telemetry service, or account.

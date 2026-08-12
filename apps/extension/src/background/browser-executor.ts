@@ -1,9 +1,11 @@
 /**
  * Browser operations executed by the extension service worker.  Keeping this
- * here means a native-messaging client can use the already-running Chrome even
- * when no side panel document exists.
+ * here means a native-messaging client can use the already-running Chrome
+ * even when no side panel document exists.
  */
 import { flowRecordingStatus, recordFlowAgentAction, recordFlowBlocker, recordFlowNote, startFlowRecording, stopFlowRecording } from './flow-recorder';
+
+import { executeWebMcpToolInPage, listWebMcpToolsInPage } from '@kv-browser-bridge/browser-protocol';
 
 export type BrowserRequest = {
   requestId: string;
@@ -195,6 +197,20 @@ async function executeInPage<T>(tabId: number, func: (...args: any[]) => T, args
     target: { tabId },
     func,
     args,
+  });
+  if (!results.length) throw new ToolError('SCRIPT_EXECUTION_FAILED', 'The page did not return a result', true);
+  return results[0].result as T;
+}
+
+/** Execute in the page MAIN world: WebMCP's navigator.modelContextTesting is
+ *  defined by page scripts in the main world and is not visible from the
+ *  isolated world that executeScript uses by default. */
+async function executeInPageMain<T>(tabId: number, func: (...args: any[]) => T, args: unknown[] = []): Promise<T> {
+  const results = await chrome.scripting.executeScript({
+    target: { tabId },
+    func,
+    args,
+    world: 'MAIN',
   });
   if (!results.length) throw new ToolError('SCRIPT_EXECUTION_FAILED', 'The page did not return a result', true);
   return results[0].result as T;
@@ -912,10 +928,14 @@ export async function handleBrowserRequest(request: BrowserRequest, connectionSt
     else if (action === 'list_bookmarks') result = await listBookmarks(params);
     else if (action === 'open_bookmark') result = await openBookmark(params);
     else if (action === 'list_extensions') result = await listExtensions(params);
+    else if (action === 'list_webmcp_tools') {
+      const tabId = await resolveTabId(params);
+      result = await executeInPageMain(tabId, listWebMcpToolsInPage);
+    }
     else if (action === 'connection_status') result = connectionStatus();
     else if (action === 'record_status') result = flowRecordingStatus();
     else {
-      const requiresExplicitTab = new Set(['navigate', 'scroll', 'click', 'type', 'press', 'select', 'evaluate', 'set_files', 'record_start', 'record_stop', 'record_note']);
+      const requiresExplicitTab = new Set(['navigate', 'scroll', 'click', 'type', 'press', 'select', 'evaluate', 'set_files', 'record_start', 'record_stop', 'record_note', 'list_webmcp_tools', 'execute_webmcp_tool']);
       if (requiresExplicitTab.has(action) && numberParam(params.tabId) == null) throw new ToolError('EXPLICIT_TAB_ID_REQUIRED', `${action} requires an explicit tabId`, false);
       const tabId = await resolveTabId(params);
       switch (action) {
@@ -947,6 +967,14 @@ export async function handleBrowserRequest(request: BrowserRequest, connectionSt
           if (!expression) throw new ToolError('INVALID_EXPRESSION', 'expression is required');
           await ensureDebuggerAttached(tabId);
           result = await sendDebuggerCommand(tabId, 'Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true, throwOnSideEffect: true, userGesture: false });
+          break;
+        }
+        case 'execute_webmcp_tool': {
+          const name = typeof params.name === 'string' && params.name ? params.name : '';
+          if (!name) throw new ToolError('INVALID_PARAMS', 'execute_webmcp_tool requires a non-empty tool name', false);
+          const rawInput = params.input;
+          const input = typeof rawInput === 'object' && rawInput !== null && !Array.isArray(rawInput) ? rawInput : {};
+          result = await executeInPageMain(tabId, executeWebMcpToolInPage, [name, input]);
           break;
         }
         case 'set_files': result = await setFiles(tabId, params); break;

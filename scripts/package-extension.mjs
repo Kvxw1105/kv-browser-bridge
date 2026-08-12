@@ -7,7 +7,7 @@ import { assertVersionConsistency } from './check-versions.mjs';
 const root = fileURLToPath(new URL('..', import.meta.url));
 const distDir = resolve(root, 'apps/extension/dist');
 const releaseDir = resolve(root, 'release');
-const requiredFiles = ['manifest.json', 'sidepanel.html', 'service-worker.js', 'content-script.js', 'element-picker.css', 'icon-16.png', 'icon-48.png', 'icon-128.png'];
+const requiredFiles = ['manifest.json', 'sidepanel.html', 'content-script.js', 'element-picker.css', 'icon-16.png', 'icon-48.png', 'icon-128.png'];
 
 function crc32(buffer) { let crc = 0xffffffff; for (const byte of buffer) { crc ^= byte; for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0); } return (crc ^ 0xffffffff) >>> 0; }
 function stamp() { return { time: 0, date: 0x21 }; }

@@ -1,8 +1,31 @@
 /// <reference types="vite/client" />
 import type { ClientMessage, ServerMessage } from '@claude-code-browser/shared';
+import type { IdentityConsoleApiResult, IdentityConsoleItem, IdentityConsoleOperationResult } from '../shared/identity-console';
+import type { IdentityConsoleLog } from '../shared/identity-console';
+import type { IdentityManifest } from '../shared/identity-manifest';
 
 declare global {
   interface Window {
+    computerStatus: {
+      doctor(): Promise<{ ok: true; data: unknown } | { ok: false; error: { code: string; message: string } }>;
+      status(): Promise<{ ok: true; data: unknown } | { ok: false; error: { code: string; message: string } }>;
+      bridge(): Promise<{ ok: true; data: { doctor?: unknown; status?: unknown; bridge: { present: boolean; protocolVersion?: number; pipeName?: string; pid?: number; startedAt?: string; extensionPath?: string; extensionPresent: boolean }; computerUseDir?: string; error?: { code: string; message: string } } } | { ok: false; error: { code: string; message: string } }>;
+    };
+    identityConsole: {
+      list(): Promise<IdentityConsoleApiResult<IdentityConsoleItem[]>>;
+      status(identityId: string): Promise<IdentityConsoleApiResult<IdentityConsoleItem>>;
+      start(identityId: string): Promise<IdentityConsoleApiResult<IdentityConsoleOperationResult>>;
+      stop(identityId: string): Promise<IdentityConsoleApiResult<IdentityConsoleOperationResult>>;
+      create(manifest: IdentityManifest): Promise<IdentityConsoleApiResult<IdentityConsoleItem>>;
+      update(manifest: IdentityManifest): Promise<IdentityConsoleApiResult<IdentityConsoleItem>>;
+      delete(identityId: string): Promise<IdentityConsoleApiResult<void>>;
+      refreshAll(): Promise<IdentityConsoleApiResult<IdentityConsoleItem[]>>;
+      validateAll(): Promise<IdentityConsoleApiResult<unknown[]>>;
+      stopAll(): Promise<IdentityConsoleApiResult<IdentityConsoleOperationResult[]>>;
+      logs(): Promise<IdentityConsoleApiResult<IdentityConsoleLog[]>>;
+      discover(): Promise<IdentityConsoleApiResult<unknown>>;
+      installBridge(): Promise<IdentityConsoleApiResult<unknown>>;
+    };
     ccb: {
       /** True in Electron (preload bridge), false in plain browser (web-transport polyfill). */
       isElectron: boolean;
@@ -52,6 +75,14 @@ declare global {
         remove(path: string): Promise<Array<{ path: string; name: string; lastOpenedAt: number }>>;
       };
       app: {
+        isWindows: boolean;
+        window: {
+          minimize(): Promise<void>;
+          toggleMaximize(): Promise<boolean>;
+          close(): Promise<void>;
+          isMaximized(): Promise<boolean>;
+          onMaximizedChange(cb: (maximized: boolean) => void): () => void;
+        };
         quit(): Promise<void>;
         onCmdW(cb: () => void): () => void;
         onCmdQDown(cb: () => void): () => void;

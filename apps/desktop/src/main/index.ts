@@ -116,7 +116,7 @@ function createWindow(): void {
     width: 1680,
     height: 1040,
     backgroundColor: '#faf7f2',
-    title: 'Claude Code Browser',
+    title: 'KV Browser Bridge',
     // Custom frameless chrome: hide the native title bar, render our own
     // breadcrumb titlebar below. Traffic lights are inset to align with it.
     titleBarStyle: isMac ? 'hiddenInset' : 'hidden',
@@ -199,6 +199,14 @@ function createWindow(): void {
 registerFsHandlers(() => mainWindow);
 
 ipcMain.handle('app:quit', () => { app.quit(); });
+ipcMain.handle('window:minimize', () => { mainWindow?.minimize(); });
+ipcMain.handle('window:toggleMaximize', () => {
+  if (!mainWindow) return false;
+  if (mainWindow.isMaximized()) mainWindow.unmaximize(); else mainWindow.maximize();
+  return mainWindow.isMaximized();
+});
+ipcMain.handle('window:close', () => { mainWindow?.close(); });
+ipcMain.handle('window:isMaximized', () => mainWindow?.isMaximized() ?? false);
 
 ipcMain.handle('recents:list', () => listRecents());
 ipcMain.handle('recents:add', (_e, path: string, name: string) => {
@@ -230,6 +238,8 @@ ipcMain.on('app:ready', () => {
 app.whenReady().then(() => {
   installAppMenu(() => mainWindow);
   createWindow();
+  mainWindow?.on('maximize', () => mainWindow?.webContents.send('window:maximized-change', true));
+  mainWindow?.on('unmaximize', () => mainWindow?.webContents.send('window:maximized-change', false));
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });

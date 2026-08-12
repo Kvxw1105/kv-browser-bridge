@@ -1,4 +1,4 @@
-import { isAbsolute } from 'node:path';
+import { basename, isAbsolute } from 'node:path';
 
 export const KV_NATIVE_HOST_NAME = 'io.kv.browser_bridge';
 export const LEGACY_NATIVE_HOST_NAME = 'com.claude_code_browser';
@@ -64,7 +64,9 @@ export function createKvWrapper(
   if (!nodePath) throw new Error('Node runtime path is required.');
   const runtime = runtimeMode ? `set "KBB_RUNTIME_MODE=${runtimeMode}"\r\n` : '';
   const coordination = coordinationMode ? `set "KBB_COORDINATION_MODE=${coordinationMode}"\r\n` : '';
-  return `@echo off\r\nREM Kv Browser Bridge wrapper - managed by Kv\r\n${runtime}${coordination}"${nodePath}" "${bridgePath}" %*\r\n`;
+  // Resolve the bridge relative to this wrapper. This keeps cmd.exe from
+  // reparsing a repository path that may contain non-ASCII directory names.
+  return `@echo off\r\nREM Kv Browser Bridge wrapper - managed by Kv\r\n${runtime}${coordination}"${nodePath}" "%~dp0${basename(bridgePath)}" %*\r\n`;
 }
 
 /**

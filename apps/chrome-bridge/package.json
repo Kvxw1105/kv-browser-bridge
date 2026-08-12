@@ -1,11 +1,13 @@
 {
   "name": "@kv-browser-bridge/chrome-bridge",
-  "version": "0.2.13",
+  "version": "0.3.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "bin": {
     "kv-browser-bridge": "./dist/bridge.js",
-    "kv-browser-bridge-install": "./dist/install.js"
+    "kv-browser-bridge-install": "./dist/install.js",
+    "kv-browser-identity": "./dist/identity-cli.js"
   },
   "scripts": {
     "build": "tsc",

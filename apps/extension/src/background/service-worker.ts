@@ -2,8 +2,17 @@ import { clearSelectedTab, getSelectedTabId, handleBrowserRequest, setSelectedTa
 import { flowRecordingStatus, recordFlowUserEvent, startFlowRecording, stopFlowRecording } from './flow-recorder';
 
 
+console.info('[kv-browser-bridge-extension]', JSON.stringify({ event: 'service_worker_module_loaded', at: new Date().toISOString() }));
+
 const HOST_NAME = 'io.kv.browser_bridge';
 const MAX_NATIVE_MESSAGE_BYTES = 480 * 1024;
+
+type BridgeIdentity = {
+  identityId: string;
+  workspaceId?: string;
+  platform?: string;
+  runtimeSessionId?: string;
+};
 
 let nativePort: chrome.runtime.Port | null = null;
 let nativeReady = false;
@@ -11,6 +20,7 @@ let lastNativeError = '';
 let reconnectAttempt = 0;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+let activeIdentity: BridgeIdentity | undefined;
 const panelPorts = new Set<chrome.runtime.Port>();
 
 type CoordinationStatus = {
@@ -76,6 +86,7 @@ function connectionStatus() {
     selectedTabId: getSelectedTabId(),
     reconnectAttempt,
     panelCount: panelPorts.size,
+    identity: activeIdentity,
   };
 }
 
@@ -84,7 +95,22 @@ function postNative(message: unknown): void {
   nativePort.postMessage(message);
 }
 
-/** Native Messaging has a one-megabyte payload limit.  Large screenshots are
+function acknowledgeIdentity(identity: BridgeIdentity | undefined): void {
+  activeIdentity = identity;
+  const manifest = chrome.runtime.getManifest();
+  postNative({
+    type: 'extension:hello',
+    protocolVersion: 1,
+    extensionId: chrome.runtime.id,
+    extensionVersion: manifest.version,
+    identity,
+    userAgent: navigator.userAgent,
+  });
+  broadcastToPanels({ type: '_identity_status', identity });
+  log('identity_acknowledged', { identityId: identity?.identityId ?? 'legacy' });
+}
+
+/** Native Messaging has a one-megabyte payload limit. Large screenshots are
  * transferred as a UTF-8 JSON stream so the Bridge can safely reconstruct the
  * original browser:response without sharing this process's stdin/stdout. */
 function postBrowserResponse(response: BrowserResponse): void {
@@ -155,10 +181,11 @@ function connectBridge(): void {
     log('bridge_connected');
     broadcastToPanels(nativeStatusMessage());
 
-    port.onMessage.addListener((message: { type?: string; requestId?: string; action?: string; params?: Record<string, unknown>; sessionId?: string; deadlineAt?: number; operationClass?: 'read' | 'non_idempotent_write'; domain?: string; paths?: string[]; status?: unknown }) => {
+    port.onMessage.addListener((message: { type?: string; requestId?: string; action?: string; params?: Record<string, unknown>; sessionId?: string; deadlineAt?: number; operationClass?: 'read' | 'non_idempotent_write'; domain?: string; paths?: string[]; status?: unknown; identity?: BridgeIdentity }) => {
       if (message.type === 'bridge:ready') {
         nativeReady = true;
         log('bridge_ready');
+        acknowledgeIdentity(message.identity);
         broadcastToPanels(nativeStatusMessage());
         return;
       }
@@ -191,6 +218,7 @@ function connectBridge(): void {
       nativeReady = false;
       lastNativeError = error;
       latestCoordinationStatus = null;
+      activeIdentity = undefined;
       if (heartbeatTimer) clearInterval(heartbeatTimer);
       heartbeatTimer = null;
       log('bridge_disconnected', { error });
@@ -235,7 +263,11 @@ chrome.runtime.onConnect.addListener((port) => {
       // Retain selection for legacy callers that do not provide tabId. New MCP
       // requests should always select explicitly through browser_switch_tab.
       setSelectedTab(message.tabId);
-      try { port.postMessage(nativeStatusMessage()); } catch { /* closed */ }
+      try {
+        port.postMessage(nativeStatusMessage());
+        port.postMessage({ type: '_native_status', connected: nativePort != null });
+        port.postMessage({ type: '_identity_status', identity: activeIdentity });
+      } catch { /* closed */ }
       if (latestCoordinationStatus) {
         try { port.postMessage({ type: 'bridge:coordination_status', status: latestCoordinationStatus }); } catch { /* closed */ }
       }

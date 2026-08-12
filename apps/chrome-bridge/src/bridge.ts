@@ -2,7 +2,7 @@
 
 import { randomBytes, randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { createServer, type Server, type Socket } from 'node:net';
@@ -12,6 +12,7 @@ import {
   browserActionFromTool,
   isBrowserResponse,
   isBrowserToolName,
+  isExtensionHello,
   isPipeHello,
   isPipeRequest,
   isRecord,
@@ -19,6 +20,7 @@ import {
   type BridgeDiscovery,
   type BridgeError,
   type BrowserRequest,
+  type ExtensionHandshakeStatus,
   type NativeMessage,
   operationClassFor,
   type PipeEvent,
@@ -33,6 +35,13 @@ import {
   isAgentIdentity,
   serializeCoordinationStatus,
 } from '@kv-browser-bridge/browser-protocol';
+import {
+  bridgeIdentityFromEnv,
+  discoveryPathForIdentity,
+  publicSessionPathForIdentity,
+  publicSessionRecord,
+  validateExtensionIdentityHello,
+} from './identity/bridge-context.js';
 import { JsonlLogger } from './logger.js';
 import { NativeMessagingChannel } from './native-channel.js';
 import { nativeDisconnectErrorFor } from './native-disconnect.js';
@@ -71,7 +80,9 @@ class ChromeBridge {
   private readonly instanceId = randomUUID();
   private readonly token = randomBytes(32).toString('base64url');
   private readonly pipeName = makePipeName();
-  private readonly discoveryPath = makeDiscoveryPath();
+  private readonly identity = bridgeIdentityFromEnv();
+  private readonly discoveryPath = discoveryPathForIdentity(this.identity);
+  private readonly publicSessionPath = this.identity ? publicSessionPathForIdentity(this.identity) : undefined;
   private readonly pending = new Map<string, PendingRequest>();
   private nativeRequestSequence = 0;
   private readonly idempotencyInFlight = new Map<string, Promise<unknown>>();
@@ -90,6 +101,7 @@ class ChromeBridge {
   private generation = 0;
   private lastExtensionMessageAt: string | undefined;
   private lastError: BridgeError | undefined;
+  private extensionHandshake: ExtensionHandshakeStatus | undefined;
 
   start(): void {
     this.native.onMessage((message) => this.handleNativeMessage(message));
@@ -106,9 +118,10 @@ class ChromeBridge {
       this.logger.write('info', 'bridge.started', {
         pipeName: this.pipeName,
         discoveryPath: this.discoveryPath,
+        identityId: this.identity?.identityId,
         logPath: this.logger.filePath,
       });
-      this.sendNative({ type: 'bridge:ready', protocolVersion: BRIDGE_PROTOCOL_VERSION });
+      this.sendNative({ type: 'bridge:ready', protocolVersion: BRIDGE_PROTOCOL_VERSION, identity: this.identity });
     });
 
     process.on('SIGINT', () => this.stop('SIGINT'));
@@ -118,8 +131,12 @@ class ChromeBridge {
   }
 
   private stop(reason: string): void {
-    this.logger.write('info', 'bridge.stopping', { reason });
+    this.logger.write('info', 'bridge.stopping', { reason, identityId: this.identity?.identityId });
     this.extensionConnected = false;
+    this.nativeReady = false;
+    this.extensionHandshake = undefined;
+    this.removePublicSession();
+    this.removeDiscovery();
     const error = this.error('CONNECTION_CLOSED', 'Chrome Bridge stopped', true);
     for (const [requestId, request] of this.pending) {
       clearTimeout(request.timer);
@@ -136,9 +153,58 @@ class ChromeBridge {
 
   private handleNativeMessage(message: NativeMessage): void {
     this.extensionConnected = true;
-    if (!this.nativeReady) this.generation += 1;
-    this.nativeReady = true;
     this.lastExtensionMessageAt = new Date().toISOString();
+
+    if (isExtensionHello(message)) {
+      try {
+        if (message.protocolVersion !== BRIDGE_PROTOCOL_VERSION) throw new Error('Extension protocol version does not match the Bridge.');
+        validateExtensionIdentityHello(this.identity, message);
+        const wasReady = this.nativeReady;
+        this.nativeReady = true;
+        if (!wasReady) this.generation += 1;
+        this.extensionHandshake = {
+          acknowledgedAt: this.lastExtensionMessageAt,
+          extensionId: message.extensionId,
+          extensionVersion: message.extensionVersion,
+          userAgent: message.userAgent,
+        };
+        this.lastError = undefined;
+        this.writePublicSession();
+        this.logger.write('info', 'extension.identity_acknowledged', {
+          identityId: this.identity?.identityId,
+          extensionId: message.extensionId,
+          extensionVersion: message.extensionVersion,
+        });
+      } catch (error) {
+        this.nativeReady = false;
+        this.extensionHandshake = undefined;
+        this.removePublicSession();
+        this.recordError(this.error(
+          'NATIVE_PROTOCOL_ERROR',
+          error instanceof Error ? error.message : String(error),
+          false,
+          { identityId: this.identity?.identityId },
+        ));
+        return;
+      }
+      this.broadcastStatus();
+      return;
+    }
+
+    if (!this.nativeReady) {
+      if (this.identity) {
+        this.logger.write('warn', 'native.message_before_identity_handshake', {
+          identityId: this.identity.identityId,
+          type: message.type,
+        });
+        return;
+      }
+      // Legacy installed extensions may not send extension:hello. Preserve the
+      // original single-browser behavior only for an unbound legacy Bridge.
+      this.generation += 1;
+      this.nativeReady = true;
+    }
+
     this.broadcastStatus();
     if (message.type === 'go_event') {
       this.logger.write('info', 'go.event', { data: message.data });
@@ -187,6 +253,7 @@ class ChromeBridge {
       method: pending.method,
       durationMs,
       errorCode: error?.code,
+      identityId: this.identity?.identityId,
     });
     if (error) pending.reject(error);
     else pending.resolve(message.result);
@@ -195,6 +262,8 @@ class ChromeBridge {
   private handleNativeError(error: Error): void {
     this.extensionConnected = false;
     this.nativeReady = false;
+    this.extensionHandshake = undefined;
+    this.removePublicSession();
     const bridgeError = nativeDisconnectErrorFor('read', error.message);
     this.recordError(bridgeError);
     for (const [requestId, request] of this.pending) {
@@ -202,7 +271,10 @@ class ChromeBridge {
       request.reject(nativeDisconnectErrorFor(request.operationClass, error.message));
       this.pending.delete(requestId);
     }
-    this.broadcastStatus();
+    // Native Messaging owns the bridge process lifetime. Once Chrome closes
+    // stdin, stop the named-pipe server as well so a managed session cannot
+    // leave an orphan host behind after its browser exits.
+    if (this.server) this.stop('native-disconnect');
   }
 
   private acceptPipeClient(socket: Socket): void {
@@ -261,7 +333,7 @@ class ChromeBridge {
         const clientVersion = rpcHello.params.version;
         const clientName = rpcHello.params.client;
         if (!isSupportedVersion(clientVersion) || rpcHello.params.token !== this.token) {
-          this.logger.write('warn', 'pipe.authentication_failed', { clientName });
+          this.logger.write('warn', 'pipe.authentication_failed', { clientName, identityId: this.identity?.identityId });
           this.writePipe(socket, this.pipeError(rpcHello.id, 'AUTHENTICATION_FAILED', 'Invalid Bridge token or protocol version', false));
           socket.destroy();
           return;
@@ -287,7 +359,7 @@ class ChromeBridge {
           id: rpcHello.id,
           result: { accepted: true, protocolVersion: BRIDGE_PROTOCOL_VERSION, sessionId, bridge: this.status() },
         });
-        this.logger.write('info', 'pipe.client_authenticated', { clientName });
+        this.logger.write('info', 'pipe.client_authenticated', { clientName, identityId: this.identity?.identityId });
         this.broadcastCoordinationStatus();
         return;
       }
@@ -299,7 +371,7 @@ class ChromeBridge {
       const clientVersion = message.version ?? message.protocolVersion;
       const clientName = message.client ?? message.clientName;
       if (!isSupportedVersion(clientVersion) || message.token !== this.token) {
-        this.logger.write('warn', 'pipe.authentication_failed', { clientName });
+        this.logger.write('warn', 'pipe.authentication_failed', { clientName, identityId: this.identity?.identityId });
         this.writePipe(socket, this.pipeError('__hello__', 'AUTHENTICATION_FAILED', 'Invalid Bridge token or protocol version', false));
         socket.destroy();
         return;
@@ -328,7 +400,7 @@ class ChromeBridge {
         bridge: this.status(),
       };
       this.writePipe(socket, ack);
-      this.logger.write('info', 'pipe.client_authenticated', { clientName });
+      this.logger.write('info', 'pipe.client_authenticated', { clientName, identityId: this.identity?.identityId });
       this.broadcastCoordinationStatus();
       return;
     }
@@ -533,8 +605,10 @@ class ChromeBridge {
   }
 
   private forwardBrowserRequest(requestId: string, sessionId: string, action: BrowserRequest['action'], params: Record<string, unknown>, requestedTimeout?: number, requestedDeadline?: number): Promise<unknown> {
-    if (!this.extensionConnected) {
-      return Promise.reject(this.error('BRIDGE_NOT_READY', 'Chrome Extension is not connected to the Bridge', true));
+    if (!this.extensionConnected || !this.nativeReady) {
+      return Promise.reject(this.error('BRIDGE_NOT_READY', this.identity
+        ? `Chrome Extension has not completed the identity handshake for ${this.identity.identityId}.`
+        : 'Chrome Extension is not connected to the Bridge', true));
     }
     const timeoutMs = clampTimeout(requestedTimeout);
     const deadlineAt = Math.min(typeof requestedDeadline === 'number' ? requestedDeadline : Infinity, Date.now() + timeoutMs);
@@ -556,7 +630,7 @@ class ChromeBridge {
       this.pending.set(nativeRequestId, { resolve, reject, timer, method: `browser_${action}`, startedAt: Date.now(), operationClass });
       try {
         this.sendNative(request);
-        this.logger.write('info', 'browser.request', { requestId: nativeRequestId, method: `browser_${action}`, timeoutMs });
+        this.logger.write('info', 'browser.request', { requestId: nativeRequestId, method: `browser_${action}`, timeoutMs, identityId: this.identity?.identityId });
       } catch (error) {
         clearTimeout(timer);
         this.pending.delete(nativeRequestId);
@@ -720,20 +794,39 @@ class ChromeBridge {
       instanceId: this.instanceId,
       generation: this.generation,
       nativeReady: this.nativeReady,
+      identity: this.identity,
+      extensionHandshake: this.extensionHandshake,
     };
   }
 
-  private writeDiscovery(): void {
-    const configDir = join(process.env.LOCALAPPDATA ?? join(homedir(), 'AppData', 'Local'), 'KvBrowserBridge');
-    if (!existsSync(configDir)) mkdirSync(configDir, { recursive: true, mode: 0o700 });
-    const discovery: BridgeDiscovery = {
+  private discoveryRecord(): BridgeDiscovery {
+    return {
       protocolVersion: BRIDGE_PROTOCOL_VERSION,
       pipeName: this.pipeName,
       token: this.token,
       pid: process.pid,
       startedAt: this.startedAt,
+      identity: this.identity,
     };
-    writeFileSync(this.discoveryPath, JSON.stringify(discovery, null, 2), { encoding: 'utf8', mode: 0o600 });
+  }
+
+  private writeDiscovery(): void {
+    mkdirSync(dirname(this.discoveryPath), { recursive: true, mode: 0o700 });
+    writeFileSync(this.discoveryPath, JSON.stringify(this.discoveryRecord(), null, 2), { encoding: 'utf8', mode: 0o600 });
+  }
+
+  private writePublicSession(): void {
+    if (!this.publicSessionPath || !this.identity || !this.nativeReady) return;
+    mkdirSync(dirname(this.publicSessionPath), { recursive: true, mode: 0o700 });
+    writeFileSync(this.publicSessionPath, `${JSON.stringify(publicSessionRecord(this.discoveryRecord()), null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+  }
+
+  private removePublicSession(): void {
+    if (this.publicSessionPath) rmSync(this.publicSessionPath, { force: true });
+  }
+
+  private removeDiscovery(): void {
+    rmSync(this.discoveryPath, { force: true });
   }
 
   private broadcastStatus(): void {
@@ -766,7 +859,7 @@ class ChromeBridge {
 
   private recordError(error: BridgeError): void {
     this.lastError = error;
-    this.logger.write('error', 'bridge.error', { code: error.code, message: error.message, retryable: error.retryable });
+    this.logger.write('error', 'bridge.error', { code: error.code, message: error.message, retryable: error.retryable, identityId: this.identity?.identityId });
     this.broadcastStatus();
   }
 }
@@ -775,10 +868,6 @@ function makePipeName(): string {
   const suffix = randomBytes(12).toString('hex');
   if (process.platform === 'win32') return `\\\\.\\pipe\\kv-browser-bridge-${process.pid}-${suffix}`;
   return join(tmpdir(), `kv-browser-bridge-${process.pid}-${suffix}.sock`);
-}
-
-function makeDiscoveryPath(): string {
-  return join(process.env.LOCALAPPDATA ?? join(homedir(), 'AppData', 'Local'), 'KvBrowserBridge', 'bridge.json');
 }
 
 function clampTimeout(value: unknown): number {
@@ -875,6 +964,7 @@ export async function testActualNativeDisconnect(operationClass: BrowserRequest[
   });
   (bridge as any).recordError = () => undefined;
   (bridge as any).broadcastStatus = () => undefined;
+  (bridge as any).removePublicSession = () => undefined;
   (bridge as any).handleNativeError(new Error('fake native disconnect'));
   return rejected;
 }
@@ -887,6 +977,7 @@ export async function testNativeRequestRouting(): Promise<{ requestIds: string[]
   (bridge as any).nativeRequestSequence = 0;
   (bridge as any).pending = new Map();
   (bridge as any).extensionConnected = true;
+  (bridge as any).nativeReady = true;
   (bridge as any).logger = { write: () => undefined };
   (bridge as any).broadcastStatus = () => undefined;
   (bridge as any).sendNative = (message: BrowserRequest) => messages.push(message);

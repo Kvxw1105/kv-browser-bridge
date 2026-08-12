@@ -1,0 +1,23 @@
+{
+  "runtimeTarget": {
+    "name": ".NETCoreApp,Version=v8.0",
+    "signature": ""
+  },
+  "compilationOptions": {},
+  "targets": {
+    ".NETCoreApp,Version=v8.0": {
+      "kv-windows-uia-driver/1.0.0": {
+        "runtime": {
+          "kv-windows-uia-driver.dll": {}
+        }
+      }
+    }
+  },
+  "libraries": {
+    "kv-windows-uia-driver/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    }
+  }
+}

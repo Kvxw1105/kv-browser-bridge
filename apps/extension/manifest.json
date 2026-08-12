@@ -1,32 +1,53 @@
 {
   "manifest_version": 3,
   "name": "Kv Browser Bridge",
-  "version": "0.2.13",
+  "version": "0.3.0",
   "author": "Kv Browser Bridge contributors",
-  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAq7Sb33wSg0LwLJ3Q9+J+ueWx9eA4/HkLtop6aCz7VGpWqLlTA/462064Umaues8nUkCd0xOwNBigskJ9pqrOoit3fEllxTy5nGOROSsOuOdZD8WISOYt/vKS+Hd9+1fzhaW+OVqYl6hT7CRBOtjPrnqbxlgz0fVKNFdVMJd2D9+EWMtAGnvqSjt4fNpRymkN5v++icEEIJG837/ePo0hdPqjKfHu+Jjw94v/CHxLmMuJ3cKUz4cT/DA++1rgn3pUf1gLkOgDMRF2DtVMYNfGsjns8qNRrN5S0A0shIUVv2cZzXoT8p63MGp1yltJ9k8ZdxwmnMHB+E2lbCH5SRn/jQIDAQAB",
   "description": "A local Chrome bridge for MCP clients. Control the current user's Chrome through Native Messaging.",
-  "permissions": ["activeTab", "scripting", "storage", "tabs", "nativeMessaging", "debugger"],
-  "optional_permissions": ["bookmarks", "downloads", "management"],
-  "host_permissions": ["http://*/*", "https://*/*"],
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "tabs",
+    "nativeMessaging",
+    "debugger",
+    "privacy"
+  ],
+  "optional_permissions": [
+    "bookmarks",
+    "downloads",
+    "management"
+  ],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
   "content_scripts": [
     {
-      "matches": ["http://*/*", "https://*/*"],
-      "js": ["content-script.js"],
-      "css": ["element-picker.css"],
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "content-script.js"
+      ],
+      "css": [
+        "element-picker.css"
+      ],
       "run_at": "document_idle"
     }
   ],
   "background": {
-    "service_worker": "service-worker.js",
+    "service_worker": "privacy-service-worker.js",
     "type": "module"
   },
   "action": {
-    "default_title": "Kv Browser Bridge",
-    "default_popup": "popup.html"
+    "default_title": "Kv Browser Bridge"
   },
   "icons": {
     "16": "icon-16.png",
     "48": "icon-48.png",
     "128": "icon-128.png"
-  }
+  },
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAq7Sb33wSg0LwLJ3Q9+J+ueWx9eA4/HkLtop6aCz7VGpWqLlTA/462064Umaues8nUkCd0xOwNBigskJ9pqrOoit3fEllxTy5nGOROSsOuOdZD8WISOYt/vKS+Hd9+1fzhaW+OVqYl6hT7CRBOtjPrnqbxlgz0fVKNFdVMJd2D9+EWMtAGnvqSjt4fNpRymkN5v++icEEIJG837/ePo0hdPqjKfHu+Jjw94v/CHxLmMuJ3cKUz4cT/DA++1rgn3pUf1gLkOgDMRF2DtVMYNfGsjns8qNRrN5S0A0shIUVv2cZzXoT8p63MGp1yltJ9k8ZdxwmnMHB+E2lbCH5SRn/jQIDAQAB"
 }
