@@ -39,7 +39,7 @@
     "check:desktop": "npm run build -w packages/browser-protocol -w packages/shared -w packages/agent-core -w apps/chrome-bridge && npm run typecheck -w apps/desktop && npm run build -w apps/desktop",
     "pack:desktop": "npm run pack -w apps/desktop",
     "dist:desktop": "npm run dist -w apps/desktop",
-    "test:local-chrome": "npm run build -w packages/browser-protocol -w apps/chrome-bridge -w apps/codex-mcp-server && npm run build:windows-uia && node --test packages/browser-protocol/test/*.test.mjs apps/chrome-bridge/test/*.test.mjs apps/codex-mcp-server/test/*.test.mjs apps/windows-uia-driver/test/*.test.mjs",
+    "test:local-chrome": "npm run build -w packages/browser-protocol -w apps/chrome-bridge && npm run build:codex-mcp && npm run build:windows-uia && node --test packages/browser-protocol/test/*.test.mjs apps/chrome-bridge/test/*.test.mjs apps/codex-mcp-server/test/*.test.mjs apps/windows-uia-driver/test/*.test.mjs",
     "test:windows-uia-e2e": "npm run build:windows-uia && set KV_RUN_UIA_E2E=1&& node --test apps/windows-uia-driver/test/driver.test.mjs",
     "test:branding": "node --test test/branding.test.mjs",
     "test:identity-setup": "node --test test/network-identity-setup.test.mjs",
