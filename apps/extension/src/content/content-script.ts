@@ -1,4 +1,5 @@
 // Prevent double-injection — use IIFE so we can early-return
+
 (function() {
 if ((window as unknown as { __ccb_injected?: boolean }).__ccb_injected) return;
 (window as unknown as { __ccb_injected: boolean }).__ccb_injected = true;
@@ -7,6 +8,8 @@ let pickerActive = false;
 let overlay: HTMLDivElement | null = null;
 let tooltip: HTMLDivElement | null = null;
 let currentTarget: Element | null = null;
+let flowRecordingActive = false;
+let recordInputValues = false;
 
 let highlightOverlay: HTMLDivElement | null = null;
 
@@ -17,6 +20,19 @@ function getBodyZoom(): number {
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message.type === 'KV_FLOW_RECORDING_START') {
+    flowRecordingActive = true;
+    recordInputValues = message.recordInputValues === true;
+    sendResponse({ ok: true });
+    return;
+  }
+
+  if (message.type === 'KV_FLOW_RECORDING_STOP') {
+    flowRecordingActive = false;
+    recordInputValues = false;
+    sendResponse({ ok: true });
+    return;
+  }
   if (message.type === 'ACTIVATE_PICKER') {
     if (pickerActive) {
       deactivatePicker();
@@ -66,6 +82,59 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     removeHighlight();
   }
 });
+
+function flowTarget(el: Element, event: MouseEvent | InputEvent) {
+  const target = resolveTarget(el);
+  const info = extractElementInfo(target);
+  const rect = target.getBoundingClientRect();
+  const x = event instanceof MouseEvent ? event.clientX : rect.left + rect.width / 2;
+  const y = event instanceof MouseEvent ? event.clientY : rect.top + rect.height / 2;
+  return {
+    selector: info.selector,
+    xpath: info.xpath,
+    role: target.getAttribute('role') || undefined,
+    name: target.getAttribute('aria-label') || getTextPreview(target).slice(0, 160) || undefined,
+    x,
+    y,
+    xRatio: Math.max(0, Math.min(1, x / Math.max(1, window.innerWidth))),
+    yRatio: Math.max(0, Math.min(1, y / Math.max(1, window.innerHeight))),
+  };
+}
+
+function flowPage() {
+  return { url: location.href, viewport: { width: window.innerWidth, height: window.innerHeight, devicePixelRatio: window.devicePixelRatio } };
+}
+
+function sensitiveInput(input: HTMLInputElement | HTMLTextAreaElement): boolean {
+  const identity = `${input.type} ${input.autocomplete} ${input.name} ${input.id} ${input.placeholder}`;
+  return input instanceof HTMLInputElement && input.type === 'password'
+    || /one-time-code|password|passcode|otp|token|secret|verification|(^|[-_ ])code/i.test(identity);
+}
+
+function recordFlowClick(event: MouseEvent): void {
+  if (!flowRecordingActive || pickerActive || !(event.target instanceof Element)) return;
+  chrome.runtime.sendMessage({
+    type: 'KV_FLOW_USER_EVENT',
+    event: { kind: 'human_click', at: new Date().toISOString(), page: flowPage(), target: flowTarget(event.target, event) },
+  }, () => void chrome.runtime.lastError);
+}
+
+function recordFlowInput(event: Event): void {
+  if (!flowRecordingActive || !(event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement)) return;
+  const input = event.target;
+  const sensitive = sensitiveInput(input);
+  const params: Record<string, unknown> = {
+    input: { kind: input.type || input.tagName.toLowerCase(), length: input.value.length, redacted: sensitive || !recordInputValues },
+  };
+  if (!sensitive && recordInputValues) (params.input as Record<string, unknown>).value = input.value;
+  chrome.runtime.sendMessage({
+    type: 'KV_FLOW_USER_EVENT',
+    event: { kind: 'human_input', at: new Date().toISOString(), page: flowPage(), target: flowTarget(input, new InputEvent('input')), params },
+  }, () => void chrome.runtime.lastError);
+}
+
+document.addEventListener('click', recordFlowClick, true);
+document.addEventListener('input', recordFlowInput, true);
 
 function activatePicker() {
   if (pickerActive) return;

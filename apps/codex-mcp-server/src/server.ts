@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { isAbsolute } from 'node:path';
+import { isAbsolute, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { z } from 'zod/v4';
 import { BridgeClient, BridgeError } from './bridge-client.js';
+import { registerGoTools } from './go.js';
 import { listIdentitySessions, resolveIdentityDiscovery } from './identity-registry.js';
 import {
   assertSelectedBridge,
@@ -22,7 +24,16 @@ function log(event: string, fields: Record<string, unknown> = {}): void {
   process.stderr.write(`${JSON.stringify({ time: new Date().toISOString(), service: 'kv-browser-bridge-mcp', event, ...fields })}\n`);
 }
 
-const bridge = new BridgeClient({ requestTimeoutMs, log });
+const goEventBuffer: Array<{ at: string; event: string; data: unknown }> = [];
+const bridge = new BridgeClient({
+  requestTimeoutMs,
+  log,
+  onEvent: (event) => {
+    if (event.event !== 'go_event') return;
+    goEventBuffer.push({ at: new Date().toISOString(), event: event.event ?? 'go_event', data: event.data });
+    if (goEventBuffer.length > 500) goEventBuffer.splice(0, goEventBuffer.length - 500);
+  },
+});
 const server = new McpServer({ name: 'kv-browser-bridge', version: '0.1.0' });
 let selectedIdentity: SelectedIdentityState = {};
 
@@ -219,6 +230,7 @@ server.tool('browser_screenshot', 'Capture a PNG screenshot from an existing Chr
 server.tool('browser_click', 'Click one element using exactly one CSS selector or XPath.', {
   ...{ tabId }, ...locator,
   allowCommentSend: z.literal(true).optional().describe('Allow only a comment-composer button whose exact text is 发送. Final publish controls remain blocked.'),
+  allowChatSend: z.literal(true).optional().describe('Allow only a chat-composer send button (text 发送/Send next to the input composer), e.g. for the KvGo engine. Final publish controls remain blocked.'),
   timeoutMs: z.number().int().positive().max(120_000).optional(),
 }, async ({ timeoutMs, ...params }) => callBridge('browser_click', params, timeoutMs));
 
@@ -310,6 +322,90 @@ server.tool('browser_connection_status', 'Probe the selected identity Bridge, or
   }
 });
 
+type BridgeInvoker = (method: string, params?: Record<string, unknown>, timeoutMs?: number) => Promise<unknown>;
+
+const leaseResource = z.union([
+  z.string().regex(/^tab:[1-9]\d*$/),
+  z.literal('global:recorder'),
+]);
+
+function boundedCoordinationResult(method: string, value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const input = value as Record<string, unknown>;
+  const client = (item: unknown): Record<string, unknown> | null => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+    const source = item as Record<string, unknown>;
+    const result: Record<string, unknown> = {};
+    for (const key of ['clientId', 'clientName', 'defaultTabId']) {
+      if (typeof source[key] === 'string' || typeof source[key] === 'number') result[key] = source[key];
+    }
+    return result.clientId && result.clientName ? result : null;
+  };
+  const lease = (item: unknown): Record<string, unknown> | null => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+    const source = item as Record<string, unknown>;
+    const result: Record<string, unknown> = {};
+    if (typeof source.leaseId === 'string') result.leaseId = source.leaseId;
+    else if (typeof source.id === 'string') result.leaseId = source.id;
+    for (const key of ['leaseId', 'resource', 'purpose', 'state', 'expiresAt', 'released']) {
+      if (key !== 'leaseId' && (typeof source[key] === 'string' || typeof source[key] === 'boolean')) result[key] = source[key];
+    }
+    return Object.keys(result).length > 0 ? result : null;
+  };
+  if (method === 'browser_get_clients') {
+    const clients = Array.isArray(input.clients) ? input.clients.map(client).filter((item): item is Record<string, unknown> => item !== null).slice(0, 100) : [];
+    return { clients };
+  }
+  if (method === 'browser_lease_status') {
+    const clients = Array.isArray(input.clients) ? input.clients.map(client).filter((item): item is Record<string, unknown> => item !== null).slice(0, 100) : [];
+    const leases = Array.isArray(input.leases) ? input.leases.map(lease).filter((item): item is Record<string, unknown> => item !== null).slice(0, 100) : [];
+    return { ...(input.mode === 'off' || input.mode === 'observe' || input.mode === 'enforce' ? { mode: input.mode } : {}), clients, leases };
+  }
+  return lease(input);
+}
+
+/** Register coordination tools separately so discovery and validation can be tested without starting stdio. */
+export function registerCoordinationTools(target: McpServer, invoke: BridgeInvoker): void {
+  const call = async (method: string, params: Record<string, unknown> = {}) => {
+    log('tool_request', { method });
+    try {
+      return json(boundedCoordinationResult(method, await invoke(method, params)));
+    } catch (error) {
+      return bridgeErrorResult(error);
+    }
+  };
+
+  target.tool('browser_get_clients', 'List connected Agent clients with bounded identity and target-tab status.', {}, async () => call('browser_get_clients'));
+  target.tool('browser_lease_status', 'Read bounded coordination mode, connected clients, and active browser leases.', {}, async () => call('browser_lease_status'));
+  target.tool('browser_lease_acquire', 'Acquire an exclusive lease for one browser tab or the global recorder.', {
+    resource: leaseResource.describe('Lease resource such as tab:123 or global:recorder.'),
+    purpose: z.string().trim().min(3).max(200).describe('Short human-readable purpose for the lease.'),
+    ttlMs: z.number().int().min(5_000).max(300_000).optional().describe('Lease time-to-live in milliseconds.'),
+  }, async (params) => call('browser_lease_acquire', params));
+  target.tool('browser_lease_renew', 'Renew a lease owned by this MCP session.', {
+    leaseId: z.string().trim().min(1).max(200).describe('Lease identifier returned by browser_lease_acquire.'),
+    ttlMs: z.number().int().min(5_000).max(300_000).optional().describe('New lease time-to-live in milliseconds.'),
+  }, async (params) => call('browser_lease_renew', params));
+  target.tool('browser_lease_release', 'Release a lease owned by this MCP session.', {
+    leaseId: z.string().trim().min(1).max(200).describe('Lease identifier to release.'),
+  }, async (params) => call('browser_lease_release', params));
+}
+
+registerCoordinationTools(server, (method, params, timeoutMs) => bridge.request(method, params, timeoutMs));
+
+registerGoTools(
+  server,
+  (method, params, timeoutMs) => bridge.request(method, params, timeoutMs),
+  log,
+  {
+    drain: (clear: boolean) => {
+      const out = [...goEventBuffer];
+      if (clear) goEventBuffer.length = 0;
+      return out;
+    },
+  },
+);
+
 async function main(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
@@ -318,10 +414,12 @@ async function main(): Promise<void> {
   void bridge.request('browser_connection_status').catch(() => undefined);
 }
 
-void main().catch((error) => {
-  log('mcp_fatal', { message: error instanceof Error ? error.message : String(error) });
-  process.exitCode = 1;
-});
+if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
+  void main().catch((error) => {
+    log('mcp_fatal', { message: error instanceof Error ? error.message : String(error) });
+    process.exitCode = 1;
+  });
+}
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.once(signal, () => void bridge.close());

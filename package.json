@@ -33,13 +33,13 @@
     "build:windows-uia": "dotnet build apps/windows-uia-driver/Kv.WindowsUia.Driver.csproj -c Release --nologo",
     "publish:windows-uia": "dotnet publish apps/windows-uia-driver/Kv.WindowsUia.Driver.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o apps/windows-uia-driver/publish --nologo",
     "build:bridge": "npm run build -w packages/browser-protocol -w apps/chrome-bridge",
-    "build:codex-mcp": "npm run build -w apps/codex-mcp-server",
+    "build:codex-mcp": "npm run build:go-agent && npm run build -w apps/codex-mcp-server",
     "build:local-chrome": "npm run build:bridge && npm run build:codex-mcp && npm run build:windows-uia && npm run build:extension",
     "check:local-chrome": "npm run build -w packages/shared && npm run build:local-chrome && npx tsc -p apps/chrome-bridge/tsconfig.json --noEmit && npx tsc -p apps/codex-mcp-server/tsconfig.json --noEmit && npx tsc -p apps/extension/tsconfig.json --noEmit",
     "check:desktop": "npm run build -w packages/browser-protocol -w packages/shared -w packages/agent-core -w apps/chrome-bridge && npm run typecheck -w apps/desktop && npm run build -w apps/desktop",
     "pack:desktop": "npm run pack -w apps/desktop",
     "dist:desktop": "npm run dist -w apps/desktop",
-    "test:local-chrome": "npm run build -w packages/browser-protocol -w apps/chrome-bridge -w apps/codex-mcp-server && npm run build:windows-uia && node --test packages/browser-protocol/test/*.test.mjs apps/chrome-bridge/test/*.test.mjs apps/codex-mcp-server/test/*.test.mjs apps/windows-uia-driver/test/*.test.mjs",
+    "test:local-chrome": "npm run build -w packages/browser-protocol -w apps/chrome-bridge && npm run build:codex-mcp && npm run build:windows-uia && node --test packages/browser-protocol/test/*.test.mjs apps/chrome-bridge/test/*.test.mjs apps/codex-mcp-server/test/*.test.mjs apps/windows-uia-driver/test/*.test.mjs",
     "test:windows-uia-e2e": "npm run build:windows-uia && set KV_RUN_UIA_E2E=1&& node --test apps/windows-uia-driver/test/driver.test.mjs",
     "test:branding": "node --test test/branding.test.mjs",
     "test:identity-setup": "node --test test/network-identity-setup.test.mjs",
@@ -62,7 +62,9 @@
     "smoke-computer-use": "powershell -ExecutionPolicy Bypass -File scripts/smoke-computer-use.ps1",
     "package-computer-use-rc": "npm run build:local-chrome && npm run publish:windows-uia && node scripts/package-computer-use-rc.mjs",
     "install-host": "npm run build -w apps/host && node apps/host/dist/install.js install",
-    "uninstall-host": "node apps/host/dist/install.js uninstall"
+    "uninstall-host": "node apps/host/dist/install.js uninstall",
+    "build:go-agent": "npm run build -w apps/go-agent",
+    "test:multi-agent": "npm run build -w packages/browser-protocol -w apps/chrome-bridge && npm run build:codex-mcp && node --test test/multi-agent-coordinator.test.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.1.0",

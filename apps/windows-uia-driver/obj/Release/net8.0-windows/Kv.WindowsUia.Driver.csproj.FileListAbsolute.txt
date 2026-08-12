@@ -1,0 +1,15 @@
+D:\Users\kvxkf\Documents\自动化发布社媒工作空间\kv-browser-bridge-pr8-go-agent-20260811\apps\windows-uia-driver\bin\Release\net8.0-windows\kv-windows-uia-driver.exe
+D:\Users\kvxkf\Documents\自动化发布社媒工作空间\kv-browser-bridge-pr8-go-agent-20260811\apps\windows-uia-driver\bin\Release\net8.0-windows\kv-windows-uia-driver.deps.json
+D:\Users\kvxkf\Documents\自动化发布社媒工作空间\kv-browser-bridge-pr8-go-agent-20260811\apps\windows-uia-driver\bin\Release\net8.0-windows\kv-windows-uia-driver.runtimeconfig.json
+D:\Users\kvxkf\Documents\自动化发布社媒工作空间\kv-browser-bridge-pr8-go-agent-20260811\apps\windows-uia-driver\bin\Release\net8.0-windows\kv-windows-uia-driver.dll
+D:\Users\kvxkf\Documents\自动化发布社媒工作空间\kv-browser-bridge-pr8-go-agent-20260811\apps\windows-uia-driver\bin\Release\net8.0-windows\kv-windows-uia-driver.pdb
+D:\Users\kvxkf\Documents\自动化发布社媒工作空间\kv-browser-bridge-pr8-go-agent-20260811\apps\windows-uia-driver\obj\Release\net8.0-windows\Kv.WindowsUia.Driver.GeneratedMSBuildEditorConfig.editorconfig
+D:\Users\kvxkf\Documents\自动化发布社媒工作空间\kv-browser-bridge-pr8-go-agent-20260811\apps\windows-uia-driver\obj\Release\net8.0-windows\Kv.WindowsUia.Driver.AssemblyInfoInputs.cache
+D:\Users\kvxkf\Documents\自动化发布社媒工作空间\kv-browser-bridge-pr8-go-agent-20260811\apps\windows-uia-driver\obj\Release\net8.0-windows\Kv.WindowsUia.Driver.AssemblyInfo.cs
+D:\Users\kvxkf\Documents\自动化发布社媒工作空间\kv-browser-bridge-pr8-go-agent-20260811\apps\windows-uia-driver\obj\Release\net8.0-windows\Kv.WindowsUia.Driver.csproj.CoreCompileInputs.cache
+D:\Users\kvxkf\Documents\自动化发布社媒工作空间\kv-browser-bridge-pr8-go-agent-20260811\apps\windows-uia-driver\obj\Release\net8.0-windows\Kv.WindowsUia.Driver.sourcelink.json
+D:\Users\kvxkf\Documents\自动化发布社媒工作空间\kv-browser-bridge-pr8-go-agent-20260811\apps\windows-uia-driver\obj\Release\net8.0-windows\kv-windows-uia-driver.dll
+D:\Users\kvxkf\Documents\自动化发布社媒工作空间\kv-browser-bridge-pr8-go-agent-20260811\apps\windows-uia-driver\obj\Release\net8.0-windows\refint\kv-windows-uia-driver.dll
+D:\Users\kvxkf\Documents\自动化发布社媒工作空间\kv-browser-bridge-pr8-go-agent-20260811\apps\windows-uia-driver\obj\Release\net8.0-windows\kv-windows-uia-driver.pdb
+D:\Users\kvxkf\Documents\自动化发布社媒工作空间\kv-browser-bridge-pr8-go-agent-20260811\apps\windows-uia-driver\obj\Release\net8.0-windows\Kv.WindowsUia.Driver.genruntimeconfig.cache
+D:\Users\kvxkf\Documents\自动化发布社媒工作空间\kv-browser-bridge-pr8-go-agent-20260811\apps\windows-uia-driver\obj\Release\net8.0-windows\ref\kv-windows-uia-driver.dll

@@ -38,6 +38,16 @@ Prefer targeted reads over complete page dumps:
 4. After navigation, upload, or a click, use `browser_wait_for`, `browser_get_text`, screenshot, or snapshot to verify the result.
 5. Treat `UNKNOWN_OUTCOME` as ambiguous: do not retry a write automatically.
 
+## Multi-Agent coordination
+
+- Always supply an explicit `tabId` for every write or tab-targeted action.
+- For a multi-step write workflow, acquire an explicit lease before the first write and release it only after the workflow is verified. Never release another Agent's lease.
+- Concurrent reads are allowed. Same-tab writes are serialized by the Bridge; different tabs can proceed in parallel.
+- On `RESOURCE_BUSY`, wait with bounded backoff or choose another tab. Never spin in a tight retry loop.
+- On `RESOURCE_QUARANTINED`, re-read and verify the tab state before retrying; an `UNKNOWN_OUTCOME` may have already changed the page.
+- Only one Agent may own the recorder at a time. Stop or hand off recording explicitly before another Agent starts it.
+- Use `browser_get_clients` and coordination status to diagnose ownership. Keep each MCP process's `KBB_CLIENT_ID` and `KBB_CLIENT_NAME` distinct.
+
 ## Boundaries
 
 - `browser_set_files` accepts absolute local paths and uses CDP file-input assignment; never use desktop file-picker coordinates.

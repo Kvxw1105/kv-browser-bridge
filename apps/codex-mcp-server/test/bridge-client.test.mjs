@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { selectUsableBridgeConfig } from '../dist/bridge-client.js';
+import { buildHelloParams, selectUsableBridgeConfig } from '../dist/bridge-client.js';
+import { createClientIdentity } from '../dist/client-identity.js';
 import { disconnectErrorFor, healthState, IdempotencyCache, operationClassForMethod, PerTabWriteQueue, timeoutErrorForMethod } from '../dist/reliability.js';
 
 test('falls back from an incomplete Kv discovery candidate to a usable legacy candidate', () => {
@@ -67,4 +68,17 @@ test('health exposes ready and degraded transitions', () => {
   assert.deepEqual(healthState(true, { extensionConnected: true, nativeReady: true }), { ready: true, degraded: false });
   assert.deepEqual(healthState(true, { extensionConnected: true, nativeReady: false }), { ready: false, degraded: true });
   assert.deepEqual(healthState(false, { extensionConnected: true, nativeReady: true }), { ready: false, degraded: false });
+});
+
+test('hello carries identity, capabilities, token, and legacy compatibility fields', () => {
+  const identity = createClientIdentity({ KBB_CLIENT_ID: 'newmax', KBB_CLIENT_NAME: 'New Max', KBB_CLIENT_INSTANCE: 'instance-1' });
+  assert.deepEqual(buildHelloParams(identity, 'secret-token'), {
+    token: 'secret-token',
+    client: 'codex-mcp-server',
+    version: '0.1.0',
+    clientId: 'newmax',
+    clientName: 'New Max',
+    instanceId: 'instance-1',
+    capabilities: ['read', 'write', 'record'],
+  });
 });

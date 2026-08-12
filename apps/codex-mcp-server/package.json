@@ -1,6 +1,7 @@
 {
   "name": "@kv-browser-bridge/codex-mcp-server",
   "version": "0.3.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Standalone stdio MCP servers for the local Chrome Bridge and Computer Use runtime.",
   "type": "module",
@@ -23,6 +24,7 @@
     "codex:uninstall": "node dist/codex-install.js uninstall"
   },
   "dependencies": {
+    "@kv-browser-bridge/go-agent": "*",
     "@modelcontextprotocol/sdk": "^1.28.0",
     "zod": "^4.3.0"
   },

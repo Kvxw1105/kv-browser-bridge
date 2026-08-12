@@ -3,6 +3,7 @@
  * here means a native-messaging client can use the already-running Chrome
  * even when no side panel document exists.
  */
+import { flowRecordingStatus, recordFlowAgentAction, recordFlowBlocker, recordFlowNote, startFlowRecording, stopFlowRecording } from './flow-recorder';
 
 import { executeWebMcpToolInPage, listWebMcpToolsInPage } from '@kv-browser-bridge/browser-protocol';
 
@@ -65,7 +66,9 @@ export function setSelectedTab(tabId: number, sessionId = PANEL_SESSION_ID): voi
 }
 
 export function getSelectedTabId(sessionId = PANEL_SESSION_ID): number | null {
-  return selectedTabs.get(sessionId) ?? null;
+  // The control panel owns the browser-wide default; an MCP session can still
+  // override it with browser_switch_tab without affecting other sessions.
+  return selectedTabs.get(sessionId) ?? (sessionId === PANEL_SESSION_ID ? null : selectedTabs.get(PANEL_SESSION_ID) ?? null);
 }
 
 export function clearSelectedTab(tabId?: number, sessionId?: string): void {
@@ -633,7 +636,8 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string)
 async function click(tabId: number, params: Record<string, unknown>): Promise<unknown> {
   const { selector, xpath } = locator(params);
   const allowCommentSend = params.allowCommentSend === true;
-  const result = await executeInPage<{ error?: string; blocked?: boolean; tag?: string; text?: string }>(tabId, (css: string, path: string, allowCommentSendControl: boolean) => {
+  const allowChatSend = params.allowChatSend === true;
+  const result = await executeInPage<{ error?: string; blocked?: boolean; tag?: string; text?: string }>(tabId, (css: string, path: string, allowCommentSendControl: boolean, allowChatSendControl: boolean) => {
     let element: Element | null = null;
     if (css) { try { element = document.querySelector(css); } catch { /* try XPath */ } }
     if (!element && path) { try { element = document.evaluate(path, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue as Element | null; } catch { /* invalid XPath */ } }
@@ -650,11 +654,25 @@ async function click(tabId: number, params: Record<string, unknown>): Promise<un
       return false;
     });
     const approvedCommentSend = allowCommentSendControl && text === '发送' && commentComposerContainsButton;
-    if (finalPublish && !explicitSafe && !approvedCommentSend) return { blocked: true, text: text.slice(0, 160) };
+    // Chat send controls (DeepSeek-style text buttons next to the input
+    // composer) are not content publication: they stay blocked unless a
+    // trusted caller (the KvGo engine) explicitly passes allowChatSend=true.
+    const chatComposerContainsButton = Array.from(document.querySelectorAll('textarea, [contenteditable="true"]')).some((composer) => {
+      let ancestor: Element | null = composer.parentElement;
+      for (let depth = 0; ancestor && depth < 5; depth += 1, ancestor = ancestor.parentElement) {
+        if (ancestor.contains(element)) return true;
+      }
+      return false;
+    });
+    const approvedChatSend = allowChatSendControl
+      && chatComposerContainsButton
+      && /发送|send/i.test(text)
+      && !/发布|提交|上线|publish|post|submit|release/i.test(text);
+    if (finalPublish && !explicitSafe && !approvedCommentSend && !approvedChatSend) return { blocked: true, text: text.slice(0, 160) };
     (element as HTMLElement).scrollIntoView({ block: 'center', inline: 'center' });
     (element as HTMLElement).click();
     return { tag: element.tagName.toLowerCase(), text: (element.textContent ?? '').trim().slice(0, 160) };
-  }, [selector, xpath, allowCommentSend]);
+  }, [selector, xpath, allowCommentSend, allowChatSend]);
   if (result.blocked) throw new ToolError('PREPUBLISH_BLOCKED', 'Clicking a final publish or submit control is disabled', false, { text: result.text });
   if (result.error) throw new ToolError('ELEMENT_NOT_FOUND', result.error, false, { selector, xpath });
   return { clicked: true, ...result };
@@ -687,6 +705,18 @@ async function typeText(tabId: number, params: Record<string, unknown>): Promise
   return { typed: true, characters: text.length, ...result };
 }
 
+/** Chrome only routes injected keyboard input to the focused window; a
+ *  background or unfocused window silently drops Input.dispatchKeyEvent.
+ *  Focus the tab's window before dispatching so browser_press behaves the
+ *  same in background tabs as in the active one. */
+async function focusWindowFor(tabId: number): Promise<void> {
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    if (tab.windowId != null) await chrome.windows.update(tab.windowId, { focused: true });
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  } catch { /* best effort: dispatching may still work in a focused window */ }
+}
+
 async function press(tabId: number, params: Record<string, unknown>): Promise<unknown> {
   const key = typeof params.key === 'string' ? params.key : '';
   if (!key) throw new ToolError('INVALID_KEY', 'key is required');
@@ -696,6 +726,7 @@ async function press(tabId: number, params: Record<string, unknown>): Promise<un
   const modifierNames = [...new Set([...suppliedModifiers, ...parsedShortcut.map((part) => part === 'Ctrl' ? 'Control' : part)])];
   const modifierBits = modifierNames.reduce((bits, modifier) => bits | ({ Alt: 1, Control: 2, Meta: 4, Shift: 8 }[modifier] ?? 0), 0);
   await ensureDebuggerAttached(tabId);
+  await focusWindowFor(tabId);
   await sendDebuggerCommand(tabId, 'Input.dispatchKeyEvent', { type: 'keyDown', key: shortcutKey, modifiers: modifierBits });
   await sendDebuggerCommand(tabId, 'Input.dispatchKeyEvent', { type: 'keyUp', key: shortcutKey, modifiers: modifierBits });
   return { pressed: shortcutKey, modifiers: modifierNames };
@@ -902,11 +933,26 @@ export async function handleBrowserRequest(request: BrowserRequest, connectionSt
       result = await executeInPageMain(tabId, listWebMcpToolsInPage);
     }
     else if (action === 'connection_status') result = connectionStatus();
+    else if (action === 'record_status') result = flowRecordingStatus();
     else {
-      const requiresExplicitTab = new Set(['navigate', 'scroll', 'click', 'type', 'press', 'select', 'evaluate', 'set_files', 'list_webmcp_tools', 'execute_webmcp_tool']);
+      const requiresExplicitTab = new Set(['navigate', 'scroll', 'click', 'type', 'press', 'select', 'evaluate', 'set_files', 'record_start', 'record_stop', 'record_note', 'list_webmcp_tools', 'execute_webmcp_tool']);
       if (requiresExplicitTab.has(action) && numberParam(params.tabId) == null) throw new ToolError('EXPLICIT_TAB_ID_REQUIRED', `${action} requires an explicit tabId`, false);
       const tabId = await resolveTabId(params);
       switch (action) {
+        case 'record_start': {
+          const intent = typeof params.intent === 'string' ? params.intent.trim() : '';
+          if (intent.length < 3) throw new ToolError('INVALID_RECORDING_INTENT', 'intent must contain at least 3 characters');
+          result = await startFlowRecording(tabId, intent, params.recordInputValues === true);
+          break;
+        }
+        case 'record_stop': result = await stopFlowRecording(tabId); break;
+        case 'record_note': {
+          const message = typeof params.message === 'string' ? params.message.trim() : '';
+          if (!message) throw new ToolError('INVALID_RECORDING_NOTE', 'message is required');
+          recordFlowNote(tabId, message);
+          result = { noted: true, tabId };
+          break;
+        }
         case 'navigate': result = await navigate(tabId, params); break;
         case 'scroll': result = await scroll(tabId, params); break;
         case 'find': result = await find(tabId, params); break;
@@ -945,9 +991,12 @@ export async function handleBrowserRequest(request: BrowserRequest, connectionSt
         case 'page_metrics': result = await pageMetrics(tabId); break;
         default: throw new ToolError('UNKNOWN_ACTION', `Unknown browser action: ${request.action}`);
       }
+      if (!action.startsWith('record_')) recordFlowAgentAction(tabId, action, params, result);
     }
     return { type: 'browser:response', requestId: request.requestId, result };
   } catch (error) {
+    const tabId = numberParam(params.tabId) ?? getSelectedTabId(sessionFor(params));
+    if (tabId != null && !action.startsWith('record_') && error instanceof ToolError) recordFlowBlocker(tabId, error.code, error.message);
     return { type: 'browser:response', requestId: request.requestId, error: asError(error) };
   }
 }

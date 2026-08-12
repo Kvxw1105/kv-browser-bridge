@@ -5,8 +5,13 @@ export const LEGACY_NATIVE_HOST_NAME = 'com.claude_code_browser';
 
 export type InstallerCommand =
   | { command: 'install'; extensionId: string }
+  | { command: 'repair'; extensionId: string }
+  | { command: 'test-install'; extensionId: string }
+  | { command: 'test-restore' }
   | { command: 'uninstall' }
   | { command: 'doctor'; json: boolean };
+
+export type CoordinationMode = 'off' | 'observe' | 'enforce';
 
 export function validateExtensionId(extensionId: string): string {
   if (!/^[a-p]{32}$/.test(extensionId)) {
@@ -23,10 +28,10 @@ export function parseInstallerArgs(args: string[]): InstallerCommand {
     }
     return { command, json: value === '--json' };
   }
-  if (extra.length > 0 || (command !== 'install' && command !== 'uninstall')) {
-    throw new Error('Usage: kv-browser-bridge-install install <extension-id> | uninstall | doctor [--json]');
+  if (extra.length > 0 || (command !== 'install' && command !== 'repair' && command !== 'uninstall' && command !== 'test-install' && command !== 'test-restore')) {
+    throw new Error('Usage: kv-browser-bridge-install install <extension-id> | repair <extension-id> | test-install <extension-id> | test-restore | uninstall | doctor [--json]');
   }
-  if (command === 'uninstall') {
+  if (command === 'uninstall' || command === 'test-restore') {
     if (value !== undefined) throw new Error('Usage: kv-browser-bridge-install install <extension-id> | uninstall | doctor [--json]');
     return { command };
   }
@@ -49,12 +54,34 @@ export function validateBridgePath(bridgePath: string): string {
   return bridgePath;
 }
 
-export function createKvWrapper(bridgePath: string, nodePath: string): string {
+export function createKvWrapper(
+  bridgePath: string,
+  nodePath: string,
+  runtimeMode?: 'shadow',
+  coordinationMode?: CoordinationMode,
+): string {
   validateBridgePath(bridgePath);
   if (!nodePath) throw new Error('Node runtime path is required.');
+  const runtime = runtimeMode ? `set "KBB_RUNTIME_MODE=${runtimeMode}"\r\n` : '';
+  const coordination = coordinationMode ? `set "KBB_COORDINATION_MODE=${coordinationMode}"\r\n` : '';
   // Resolve the bridge relative to this wrapper. This keeps cmd.exe from
   // reparsing a repository path that may contain non-ASCII directory names.
-  return `@echo off\r\nREM Kv Browser Bridge wrapper - managed by Kv\r\n"${nodePath}" "%~dp0${basename(bridgePath)}" %*\r\n`;
+  return `@echo off\r\nREM Kv Browser Bridge wrapper - managed by Kv\r\n${runtime}${coordination}"${nodePath}" "%~dp0${basename(bridgePath)}" %*\r\n`;
+}
+
+/**
+ * Generate a user-facing repair launcher outside the source checkout. The
+ * launcher keeps repair usable when an Agent is not started in the repository
+ * and exposes no browser data or credentials.
+ */
+export function createRepairHelper(installerPath: string, nodePath: string): string {
+  if (!isAbsolute(installerPath) || !/\.js$/i.test(installerPath)) throw new Error('Installer path must be an absolute JavaScript file path.');
+  if (!nodePath || !isAbsolute(nodePath)) throw new Error('Node runtime path must be absolute.');
+  return `@echo off\r\nREM Kv Browser Bridge repair helper - managed by Kv\r\n"${nodePath}" "${installerPath}" %*\r\n`;
+}
+
+export function isKvOwnedRepairHelper(contents: string): boolean {
+  return contents.includes('REM Kv Browser Bridge repair helper - managed by Kv');
 }
 
 export function isKvOwnedWrapper(contents: string): boolean {

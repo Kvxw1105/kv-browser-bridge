@@ -38,6 +38,17 @@ node apps/chrome-bridge/dist/install.js install <extension-id>
 
 The extension ID is required: Chrome Native Messaging manifests allow only the extension origin that was registered. Reload the extension (or restart Chrome) after registration.
 
+The installer creates a standalone recovery launcher for any local Agent:
+
+```powershell
+& "$env:LOCALAPPDATA\KvBrowserBridge\bin\kv-browser-bridge-repair.cmd" repair <current-extension-id>
+& "$env:LOCALAPPDATA\KvBrowserBridge\bin\kv-browser-bridge-repair.cmd" doctor --json
+```
+
+The extension's repair panel injects the current runtime extension ID into a
+self-contained, Agent-agnostic prompt. It does not assume Codex, a previous
+conversation, a fixed repository path, or a fixed extension ID.
+
 To remove the registration:
 
 ```powershell

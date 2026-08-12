@@ -8,6 +8,12 @@ export const NATIVE_MESSAGE_MAX_BYTES = 1024 * 1024;
 export const NATIVE_CHUNK_MAX_BYTES = 384 * 1024;
 export const PIPE_LINE_MAX_BYTES = 1024 * 1024;
 
+export * from './flow-recorder.js';
+export * from './coordinator.js';
+
+import type { CoordinationPipeMethod, CoordinationStatusView } from './coordinator.js';
+import { isAgentIdentity } from './coordinator.js';
+
 export interface BridgeIdentity {
   identityId: string;
   workspaceId?: string;
@@ -68,10 +74,15 @@ export type BrowserAction =
   | 'inspect_element'
   | 'get_element_styles'
   | 'page_metrics'
+  | 'record_start'
+  | 'record_stop'
+  | 'record_status'
+  | 'record_note'
   | 'list_webmcp_tools'
   | 'execute_webmcp_tool';
 
 export type BrowserToolName = `browser_${BrowserAction}`;
+export type RuntimeToolName = 'browser_recipe_review' | 'browser_replay_start' | 'browser_replay_step' | 'browser_run_export' | 'browser_run_generate_guide';
 export type OperationClass = 'read' | 'non_idempotent_write';
 
 export interface BrowserRequest {
@@ -106,6 +117,10 @@ export type BridgeErrorCode =
   | 'UNKNOWN_OUTCOME'
   | 'DEBUGGER_DETACHED'
   | 'DEBUGGER_IN_USE'
+  | 'RESOURCE_BUSY'
+  | 'RESOURCE_QUARANTINED'
+  | 'TAB_ID_REQUIRED'
+  | 'LEASE_NOT_OWNED'
   | 'INTERNAL_ERROR';
 
 export interface BridgeError {
@@ -128,6 +143,15 @@ export type NativeMessage = BrowserRequest | BrowserResponse | NativeChunk | Bri
   type: 'ping';
 } | {
   type: 'pong';
+} | {
+  type: 'bridge:coordination_status';
+  status: CoordinationStatusView;
+} | {
+  type: 'go_event';
+  data: unknown;
+} | {
+  type: 'go_ledger_append';
+  data: { key: string; event: Record<string, unknown> };
 };
 
 export interface PipeHello {
@@ -139,6 +163,9 @@ export interface PipeHello {
   /** Accepted during the migration from the original bridge draft. */
   protocolVersion?: number | string;
   clientName?: string;
+  clientId?: string;
+  instanceId?: string;
+  capabilities?: import('./coordinator.js').AgentCapability[];
 }
 
 export interface PipeHelloAck {
@@ -151,7 +178,7 @@ export interface PipeHelloAck {
 export interface PipeRequest {
   type?: 'request';
   id: string;
-  method: BrowserToolName | 'browser_connection_status';
+  method: BrowserToolName | RuntimeToolName | 'browser_connection_status' | CoordinationPipeMethod;
   params?: Record<string, unknown>;
   timeoutMs?: number;
   sessionId?: string;
@@ -168,11 +195,19 @@ export interface PipeResponse {
   error?: BridgeError;
 }
 
-export interface PipeEvent {
+export interface ConnectionStatusPipeEvent {
   type: 'event';
   event: 'connection:status';
   data: BridgeConnectionStatus;
 }
+
+export interface CoordinationStatusPipeEvent {
+  type: 'event';
+  event: 'coordination:status';
+  data: CoordinationStatusView;
+}
+
+export type PipeEvent = ConnectionStatusPipeEvent | CoordinationStatusPipeEvent;
 
 export type PipeMessage = PipeHello | PipeHelloAck | PipeRequest | PipeResponse | PipeEvent;
 
@@ -195,7 +230,7 @@ export function operationClassFor(action: BrowserAction): OperationClass {
   // `execute_webmcp_tool` is a page-side write: an ambiguous timeout or
   // disconnect must surface as UNKNOWN_OUTCOME so the caller never retries
   // the tool call (WebMCP execution can have side effects on the page).
-  return new Set<BrowserAction>(['get_tabs', 'find', 'download_status', 'list_bookmarks', 'list_extensions', 'snapshot', 'screenshot', 'wait_for', 'get_text', 'get_url', 'console_logs', 'console_errors', 'network_requests', 'network_failures', 'get_response_body', 'inspect_element', 'get_element_styles', 'page_metrics', 'list_webmcp_tools']).has(action)
+  return new Set<BrowserAction>(['get_tabs', 'find', 'download_status', 'list_bookmarks', 'list_extensions', 'snapshot', 'screenshot', 'wait_for', 'get_text', 'get_url', 'console_logs', 'console_errors', 'network_requests', 'network_failures', 'get_response_body', 'inspect_element', 'get_element_styles', 'page_metrics', 'record_status', 'list_webmcp_tools']).has(action)
     ? 'read' : 'non_idempotent_write';
 }
 
@@ -217,7 +252,7 @@ export function browserActionFromTool(method: BrowserToolName): BrowserAction {
 }
 
 export function isBrowserToolName(value: string): value is BrowserToolName {
-  return /^browser_(get_tabs|new_tab|switch_tab|scroll|find|close_tab|download_status|list_bookmarks|open_bookmark|list_extensions|navigate|snapshot|screenshot|click|type|press|select|evaluate|set_files|wait_for|get_text|get_url|console_logs|console_errors|network_requests|network_failures|get_response_body|inspect_element|get_element_styles|page_metrics|list_webmcp_tools|execute_webmcp_tool)$/.test(value);
+  return /^browser_(get_tabs|new_tab|switch_tab|scroll|find|close_tab|download_status|list_bookmarks|open_bookmark|list_extensions|navigate|snapshot|screenshot|click|type|press|select|evaluate|set_files|wait_for|get_text|get_url|console_logs|console_errors|network_requests|network_failures|get_response_body|inspect_element|get_element_styles|page_metrics|record_start|record_stop|record_status|record_note|list_webmcp_tools|execute_webmcp_tool)$/.test(value);
 }
 
 export function isNativeChunk(value: unknown): value is NativeChunk {
@@ -255,8 +290,11 @@ export function isPipeHello(value: unknown): value is PipeHello {
   return isRecord(value)
     && value.type === 'hello'
     && typeof value.token === 'string'
+    && (!('clientName' in value) || typeof value.clientName === 'string')
     && (typeof value.version === 'number' || typeof value.version === 'string'
-      || typeof value.protocolVersion === 'number' || typeof value.protocolVersion === 'string');
+      || typeof value.protocolVersion === 'number' || typeof value.protocolVersion === 'string')
+    && (!('clientId' in value || 'instanceId' in value || 'capabilities' in value)
+      || isAgentIdentity(value));
 }
 
 export function isPipeRequest(value: unknown): value is PipeRequest {
