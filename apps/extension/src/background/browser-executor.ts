@@ -6,6 +6,7 @@
 import { flowRecordingStatus, recordFlowAgentAction, recordFlowBlocker, recordFlowNote, startFlowRecording, stopFlowRecording } from './flow-recorder';
 
 import { executeWebMcpToolInPage, listWebMcpToolsInPage } from '@kv-browser-bridge/browser-protocol';
+import { renderLocalObservation, type RawVomNode, type RawVomObservation } from './vom-adapter';
 
 export type BrowserRequest = {
   requestId: string;
@@ -559,24 +560,34 @@ async function snapshot(tabId: number, params: Record<string, unknown>): Promise
   const tab = await chrome.tabs.get(tabId);
   const maxChars = Math.max(500, Math.min(numberParam(params.maxChars) ?? 12_000, 100_000));
   try {
-    const tree = await withSafeDebuggerRead(tabId, () => sendDebuggerCommand<{ nodes?: Array<{ nodeId?: string; role?: { value?: string }; name?: { value?: string }; childIds?: string[] }> }>(tabId, 'Accessibility.getFullAXTree'));
+    const tree = await withSafeDebuggerRead(tabId, () => sendDebuggerCommand<{ nodes?: Array<{
+      nodeId?: string;
+      parentId?: string;
+      role?: { value?: string };
+      name?: { value?: string };
+      value?: { value?: unknown };
+      childIds?: string[];
+      backendDOMNodeId?: number;
+      frameId?: string;
+    }> }>(tabId, 'Accessibility.getFullAXTree'));
     if (tree.nodes?.length) {
-      const byId = new Map(tree.nodes.filter((node): node is Required<Pick<typeof node, 'nodeId'>> & typeof node => Boolean(node.nodeId)).map((node) => [node.nodeId, node]));
-      const lines: string[] = [];
-      const maxDepth = Math.max(1, Math.min(numberParam(params.maxDepth) ?? 12, 50));
-      const walk = (nodeId: string, depth: number) => {
-        if (depth > maxDepth) return;
-        const node = byId.get(nodeId);
-        if (!node) return;
-        const role = node.role?.value ?? '';
-        const name = node.name?.value ?? '';
-        const visible = role && role !== 'none' && role !== 'generic';
-        if (visible) lines.push(`${'  '.repeat(depth)}${role}${name ? ` \"${name}\"` : ''}`);
-        for (const childId of node.childIds ?? []) walk(childId, depth + (visible ? 1 : 0));
+      const layout = await withSafeDebuggerRead(tabId, () => sendDebuggerCommand<{ cssVisualViewport?: { clientWidth?: number; clientHeight?: number } }>(tabId, 'Page.getLayoutMetrics')).catch((): { cssVisualViewport?: { clientWidth?: number; clientHeight?: number } } => ({}));
+      const viewport = {
+        width: layout.cssVisualViewport?.clientWidth && layout.cssVisualViewport.clientWidth > 0 ? layout.cssVisualViewport.clientWidth : 1280,
+        height: layout.cssVisualViewport?.clientHeight && layout.cssVisualViewport.clientHeight > 0 ? layout.cssVisualViewport.clientHeight : 800,
       };
-      if (tree.nodes[0].nodeId) walk(tree.nodes[0].nodeId, 0);
-      const snapshot = lines.join('\n');
-      return { tabId, title: tab.title ?? '', url: tab.url ?? '', snapshot: snapshot.slice(0, maxChars), format: 'accessibility', truncated: snapshot.length > maxChars };
+      const raw = rawObservationFromAxTree(tree.nodes, viewport);
+      const rendered = renderLocalObservation(raw);
+      const snapshot = rendered.text.slice(0, maxChars);
+      return {
+        tabId,
+        title: tab.title ?? '',
+        url: tab.url ?? '',
+        snapshot,
+        refs: rendered.refs,
+        format: 'vom',
+        truncated: rendered.truncated || snapshot.length < rendered.text.length,
+      };
     }
   } catch { /* Fall back to a DOM-only structural view. */ }
 
@@ -597,6 +608,53 @@ async function snapshot(tabId: number, params: Record<string, unknown>): Promise
     return document.body ? render(document.body, 0) : '';
   }, [maxDepth]);
   return { tabId, title: tab.title ?? '', url: tab.url ?? '', snapshot: dom.slice(0, maxChars), format: 'dom', truncated: dom.length > maxChars };
+}
+
+function rawObservationFromAxTree(
+  axNodes: Array<{ nodeId?: string; parentId?: string; role?: { value?: string }; name?: { value?: string }; value?: { value?: unknown }; childIds?: string[]; backendDOMNodeId?: number; frameId?: string }>,
+  viewport: { width: number; height: number },
+): RawVomObservation {
+  const idByNodeId = new Map<string, number>();
+  const roots = new Set<string>();
+  for (const node of axNodes) {
+    if (!node.nodeId) continue;
+    idByNodeId.set(node.nodeId, idByNodeId.size + 1);
+    if (!node.parentId || !axNodes.some((other) => other.nodeId === node.parentId)) roots.add(node.nodeId);
+  }
+  const nodes: RawVomNode[] = [];
+  let rootFrameId: string | undefined;
+  const visit = (nodeId: string) => {
+    const node = axNodes.find((candidate) => candidate.nodeId === nodeId);
+    if (!node) return;
+    const role = node.role?.value ?? '';
+    const id = idByNodeId.get(nodeId);
+    if (id === undefined) return;
+    const parentId = node.parentId ? (idByNodeId.get(node.parentId) ?? null) : null;
+    if (parentId === null && node.frameId) rootFrameId ??= node.frameId;
+    const value = node.value?.value;
+    nodes.push({
+      id,
+      parentId,
+      ...(node.backendDOMNodeId !== undefined ? { backendNodeId: node.backendDOMNodeId } : {}),
+      ...(node.frameId ? { frameId: node.frameId } : {}),
+      ...(role ? { role } : {}),
+      ...(node.name?.value !== undefined ? { name: node.name.value } : {}),
+      ...(typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' ? { value: String(value) } : {}),
+      rect: null,
+      paintOrder: nodes.length,
+      position: 'static',
+      pointerEvents: 'auto',
+    });
+    for (const childId of node.childIds ?? []) visit(childId);
+  };
+  for (const rootId of roots) visit(rootId);
+  const seen = new Set(nodes.map((node) => node.id));
+  for (const node of axNodes) {
+    if (!node.nodeId) continue;
+    const id = idByNodeId.get(node.nodeId);
+    if (id !== undefined && !seen.has(id)) visit(node.nodeId);
+  }
+  return { viewport, ...(rootFrameId ? { rootFrameId } : {}), nodes };
 }
 
 async function screenshot(tabId: number): Promise<unknown> {

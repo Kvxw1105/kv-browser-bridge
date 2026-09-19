@@ -54,6 +54,30 @@ published interface semantics and observed runtime behavior.
   service worker. No source code from this project is included in this
   repository.
 
+## BrowserSkill VOM renderer (vendored, adapted)
+
+- Project: Tencent/BrowserSkill
+- Source URL: https://github.com/Tencent/BrowserSkill
+- License: MIT
+- Vendored commit: `fa953dc6fcd868827b93164e3bea26198e691224`
+- Vendor record: `vendor/browser-skill/SOURCE.json`
+- Copied paths: `packages/vom/src` (the pure VOM rendering algorithm:
+  `index.ts`, `types.ts`, `layers.ts`, `render.ts`), vendored into
+  `packages/vom/src` as `@kv-browser-bridge/vom`.
+- Adaptation: relative imports were rewritten with `.js` extensions so the
+  `tsc`-built ESM output resolves under both Node and Vite; the package
+  `tsconfig.json` raises `target`/`lib` to ES2023 (upstream code uses
+  `Array.prototype.findLastIndex`). The algorithm itself is copied
+  unmodified in spirit — no rewrites of the VOM core.
+- Excluded paths: upstream `apps/`, `crates/`, `scripts/`, `skill/`, `evals/`,
+  and the upstream package/vitest scaffolding were not copied. No
+  credentials, browser profiles, cookies, transport, daemon, or branding
+  were copied. Local identity, credential, Native Messaging, Named Pipe, MCP,
+  and publish boundaries remain governed by Kv Browser Bridge rules; the
+  local adapter (`apps/extension/src/background/vom-adapter.ts`) is the only
+  consumer boundary and performs no transport, input, upload, or publish
+  work.
+
 ## Existing notices
 
 The root `NOTICE` covers the Claude Code Browser baseline lineage (MIT,

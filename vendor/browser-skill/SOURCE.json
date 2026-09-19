@@ -1,0 +1,30 @@
+{
+  "repository": "https://github.com/Tencent/BrowserSkill",
+  "commit": "fa953dc6fcd868827b93164e3bea26198e691224",
+  "license": "MIT",
+  "vendorPath": "packages/vom/src",
+  "copied_paths": [
+    "packages/vom/src/index.ts",
+    "packages/vom/src/types.ts",
+    "packages/vom/src/layers.ts",
+    "packages/vom/src/render.ts"
+  ],
+  "excluded_paths": [
+    "packages/vom/package.json",
+    "packages/vom/tsconfig.json",
+    "packages/vom/vitest.config.ts",
+    "packages/vom/src/__tests__/layers.test.ts",
+    "packages/vom/src/__tests__/render.test.ts",
+    "apps/",
+    "crates/",
+    "scripts/",
+    "skill/",
+    "evals/"
+  ],
+  "policy": {
+    "scope": "Pure VOM rendering algorithm only. Copied and aggressively adapted to the local package contract (@kv-browser-bridge/vom) and local import style.",
+    "prohibited": "No credentials, browser profiles, cookies, transport, daemon, or branding copied.",
+    "boundaries": "Local identity, credential, Native Messaging, Named Pipe, MCP, and publish boundaries follow Kv Browser Bridge rules. CDP input/upload/session-queue/top-level adapter code stays local.",
+    "attribution": "See THIRD_PARTY_NOTICES.md for full attribution."
+  }
+}
