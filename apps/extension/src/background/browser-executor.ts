@@ -8,7 +8,7 @@ import { flowRecordingStatus, recordFlowAgentAction, recordFlowBlocker, recordFl
 import { executeWebMcpToolInPage, listWebMcpToolsInPage } from '@kv-browser-bridge/browser-protocol';
 import { renderLocalObservation, type RawVomNode, type RawVomObservation } from './vom-adapter';
 import { RefStore, type LocalRefEntry, type RefOwnership } from './ref-store';
-import { requireRefTarget, RefGuardError, storeObservation, type RefObservation, type ResolvedRefTarget } from './observation-store';
+import { requireRefTarget, RefGuardError, storeObservation, refObservationFromSnapshot, type RefObservation, type ResolvedRefTarget } from './observation-store';
 import { dispatchClick, type CdpRunner } from './cdp-input';
 import { uploadThroughActivatedFileInput, type UploadManifest, type UploadManifestEntry, type UploadRunner, type UploadValidation } from './upload-transaction';
 
@@ -48,7 +48,8 @@ const MAX_DEVTOOLS_ENTRIES = 200;
 export const refStore = new RefStore();
 
 /** Minimal VOM import boundary: atomically replace refs after one fresh
- * observation. A future VOM adapter writes every observation through here. */
+ * observation. browser_snapshot writes every rendered observation through
+ * here. */
 export function storeRefObservation(observation: RefObservation): void {
   storeObservation(refStore, observation);
 }
@@ -71,6 +72,16 @@ function currentOwnership(connectionStatus: () => unknown): RefOwnership {
     throw new RefGuardError('REF_SCOPE_MISMATCH', 'refs require a selected identity and runtime session', {});
   }
   return { identityId, runtimeSessionId };
+}
+
+/** Ownership when a managed identity is active; null in legacy mode. Used by
+ * observation paths that still return a result without an identity. */
+function tryCurrentOwnership(connectionStatus: () => unknown): RefOwnership | null {
+  try {
+    return currentOwnership(connectionStatus);
+  } catch {
+    return null;
+  }
 }
 
 /** Gate a `ref` param through the RefStore. Returns null without a ref param;
@@ -606,7 +617,7 @@ async function listExtensions(params: Record<string, unknown>): Promise<unknown>
   };
 }
 
-async function snapshot(tabId: number, params: Record<string, unknown>): Promise<unknown> {
+async function snapshot(tabId: number, params: Record<string, unknown>, connectionStatus: () => unknown): Promise<unknown> {
   const tab = await chrome.tabs.get(tabId);
   const maxChars = Math.max(500, Math.min(numberParam(params.maxChars) ?? 12_000, 100_000));
   try {
@@ -628,6 +639,16 @@ async function snapshot(tabId: number, params: Record<string, unknown>): Promise
       };
       const raw = rawObservationFromAxTree(tree.nodes, viewport);
       const rendered = renderLocalObservation(raw);
+      // Atomically refresh the local RefStore from this observation before the
+      // envelope leaves: replace() swaps in one fresh generation with no await
+      // in between, so no other request can observe a partially populated
+      // store. Every ref inherits identity + runtime session + tab + its own
+      // frame. Legacy mode (no managed identity) stores nothing and still
+      // returns the envelope unchanged.
+      const ownership = tryCurrentOwnership(connectionStatus);
+      if (ownership) {
+        storeRefObservation(refObservationFromSnapshot(rendered.refs, tabId, ownership));
+      }
       const snapshot = rendered.text.slice(0, maxChars);
       return {
         tabId,
@@ -1190,7 +1211,7 @@ export async function handleBrowserRequest(request: BrowserRequest, connectionSt
         case 'navigate': result = await navigate(tabId, params); break;
         case 'scroll': result = await scroll(tabId, params); break;
         case 'find': result = await find(tabId, params); break;
-        case 'snapshot': result = await snapshot(tabId, params); break;
+        case 'snapshot': result = await snapshot(tabId, params, connectionStatus); break;
         case 'screenshot': result = await screenshot(tabId); break;
         case 'click': {
           const refTarget = gateRef(params, tabId, connectionStatus);
