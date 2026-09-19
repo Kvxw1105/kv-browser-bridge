@@ -7,6 +7,7 @@ import { z } from 'zod/v4';
 import { BridgeClient, BridgeError } from './bridge-client.js';
 import { registerGoTools } from './go.js';
 import { listIdentitySessions, resolveIdentityDiscovery } from './identity-registry.js';
+import { effectClassForMethod } from './reliability.js';
 import {
   assertSelectedBridge,
   publicBridgeClientStatus,
@@ -78,7 +79,7 @@ async function requestBridge(method: string, params: Record<string, unknown> = {
 }
 
 async function callBridge(method: string, params: Record<string, unknown> = {}, timeoutMs?: number) {
-  log('tool_request', { method, identityId: selectedIdentity.identityId });
+  log('tool_request', { method, effectClass: effectClassForMethod(method), identityId: selectedIdentity.identityId });
   try {
     return json(await requestBridge(method, params, timeoutMs));
   } catch (error) {
@@ -266,7 +267,7 @@ if (webmcpEnabled) {
     ...{ tabId },
   }, async (params) => callBridge('browser_list_webmcp_tools', params));
 
-  server.tool('browser_execute_webmcp_tool', 'Execute one WebMCP tool in the current tab using the Bridge fixed executeTool template (the tool list is re-checked first; the tool result is returned structured; the tool list is re-listed after execution in toolsAfter). Status: completed | unavailable | tool_not_found | failed | unknown_outcome. unknown_outcome means navigation, disconnect, or timeout made the outcome unknowable — never retry it, re-list tools instead. This tool never evaluates caller-supplied JavaScript.', {
+  server.tool('browser_execute_webmcp_tool', 'Execute one WebMCP tool in the current tab using the Bridge fixed executeTool template (the tool list is re-checked first; the tool result is returned structured; the tool list is re-listed after execution in toolsAfter). Status: completed | unavailable | tool_not_found | failed | unknown_outcome. unknown_outcome means navigation, disconnect, or timeout made the outcome unknowable — an external commit may already have happened (effectClass: external_commit), so never retry it, re-list tools instead. This tool never evaluates caller-supplied JavaScript.', {
     ...{ tabId },
     name: z.string().min(1).describe('Exact WebMCP tool name previously returned by browser_list_webmcp_tools.'),
     input: z.record(z.string(), z.unknown()).optional().describe('Tool input object. Serialized to JSON before executeTool.'),
@@ -274,9 +275,11 @@ if (webmcpEnabled) {
   }, async ({ timeoutMs, ...params }) => callBridge('browser_execute_webmcp_tool', params, timeoutMs));
 }
 
-server.tool('browser_set_files', 'Set files on an input[type=file] using Chrome DevTools Protocol. Paths must be absolute local paths.', {
+server.tool('browser_set_files', 'Set files on an input[type=file] using the Bridge file-input transaction. Every file path must be absolute, inside the content package root, listed in the manifest, and within the adapter limit; the extension enforces these structural rules before any upload. SHA-256/existence verification is enforced by a caller with filesystem access (the extension service worker has none) and is reported via the manifest.', {
   ...{ tabId }, ...locator,
   files: z.array(z.string().min(1).refine(isAbsolute, 'Each file path must be absolute.')).min(1).describe('Absolute local file paths to set on the upload input.'),
+  packageRoot: z.string().min(1).refine(isAbsolute, 'packageRoot must be absolute.').optional().describe('Content-package root every upload file must reside under.'),
+  manifest: z.array(z.object({ path: z.string().min(1), sha256: z.string().regex(/^[0-9a-f]{64}$/i, 'sha256 must be 64 hex characters.') })).optional().describe('Content-package manifest entries (path + SHA-256) that every upload file must match.'),
 }, async (params) => callBridge('browser_set_files', params, 120_000));
 
 server.tool('browser_wait_for', 'Wait for a selector, XPath, text, URL, or load condition in an existing Chrome tab.', {

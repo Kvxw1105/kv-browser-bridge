@@ -7,6 +7,10 @@ import { flowRecordingStatus, recordFlowAgentAction, recordFlowBlocker, recordFl
 
 import { executeWebMcpToolInPage, listWebMcpToolsInPage } from '@kv-browser-bridge/browser-protocol';
 import { renderLocalObservation, type RawVomNode, type RawVomObservation } from './vom-adapter';
+import { RefStore, type LocalRefEntry, type RefOwnership } from './ref-store';
+import { requireRefTarget, RefGuardError, storeObservation, type RefObservation, type ResolvedRefTarget } from './observation-store';
+import { dispatchClick, type CdpRunner } from './cdp-input';
+import { uploadThroughActivatedFileInput, type UploadManifest, type UploadManifestEntry, type UploadRunner, type UploadValidation } from './upload-transaction';
 
 export type BrowserRequest = {
   requestId: string;
@@ -39,6 +43,44 @@ const consoleEntries = new Map<number, Array<Record<string, unknown>>>();
 const networkEntries = new Map<number, Array<Record<string, unknown>>>();
 const MAX_DEVTOOLS_ENTRIES = 200;
 
+/** Ref identity store for VOM-style observations. Every ref is owned by an
+ * identity + runtime session + tab; ref-accepting tools are gated through it. */
+export const refStore = new RefStore();
+
+/** Minimal VOM import boundary: atomically replace refs after one fresh
+ * observation. A future VOM adapter writes every observation through here. */
+export function storeRefObservation(observation: RefObservation): void {
+  storeObservation(refStore, observation);
+}
+
+export function invalidateRefsForTab(tabId: number): void {
+  refStore.invalidateTab(tabId);
+}
+
+export function invalidateRefsForSession(identityId: string, runtimeSessionId: string): void {
+  refStore.invalidateSession({ identityId, runtimeSessionId });
+}
+
+/** Current identity/runtime session from the connection status. Refs are only
+ * usable when a managed identity is active; legacy mode has no scope. */
+function currentOwnership(connectionStatus: () => unknown): RefOwnership {
+  const status = connectionStatus() as { identity?: { identityId?: string; runtimeSessionId?: string } };
+  const identityId = status.identity?.identityId;
+  const runtimeSessionId = status.identity?.runtimeSessionId ?? '';
+  if (!identityId) {
+    throw new RefGuardError('REF_SCOPE_MISMATCH', 'refs require a selected identity and runtime session', {});
+  }
+  return { identityId, runtimeSessionId };
+}
+
+/** Gate a `ref` param through the RefStore. Returns null without a ref param;
+ * throws STALE_REF / REF_SCOPE_MISMATCH otherwise. Never falls back to a
+ * selector. */
+function gateRef(params: Record<string, unknown>, tabId: number, connectionStatus: () => unknown): ResolvedRefTarget | null {
+  if (typeof params.ref !== 'string' || !params.ref.trim()) return null;
+  return requireRefTarget(refStore, params, currentOwnership(connectionStatus), tabId);
+}
+
 class ToolError extends Error {
   constructor(
     readonly code: string,
@@ -52,6 +94,9 @@ class ToolError extends Error {
 
 function asError(error: unknown): BrowserError {
   if (error instanceof ToolError) {
+    return { code: error.code, message: error.message, retryable: error.retryable, details: error.details };
+  }
+  if (error instanceof RefGuardError) {
     return { code: error.code, message: error.message, retryable: error.retryable, details: error.details };
   }
   const message = error instanceof Error ? error.message : String(error);
@@ -144,9 +189,14 @@ async function withSafeDebuggerRead<T>(tabId: number, work: () => Promise<T>): P
 }
 
 chrome.debugger.onDetach.addListener((source, reason) => {
-  if (source.tabId != null) { debuggerTabs.delete(source.tabId); observedTabs.delete(source.tabId); }
+  if (source.tabId != null) { debuggerTabs.delete(source.tabId); observedTabs.delete(source.tabId); refStore.invalidateTab(source.tabId); }
 });
-chrome.tabs.onRemoved.addListener((tabId) => { debuggerTabs.delete(tabId); observedTabs.delete(tabId); consoleEntries.delete(tabId); networkEntries.delete(tabId); });
+chrome.tabs.onRemoved.addListener((tabId) => { debuggerTabs.delete(tabId); observedTabs.delete(tabId); consoleEntries.delete(tabId); networkEntries.delete(tabId); refStore.invalidateTab(tabId); });
+// Navigation replaces the document; CDP node ids may be reused by the new
+// document, so drop the navigated tab's refs as soon as loading starts.
+chrome.tabs.onUpdated.addListener((tabId, info) => {
+  if (info.status === 'loading') refStore.invalidateTab(tabId);
+});
 
 function appendDevtoolsEntry(store: Map<number, Array<Record<string, unknown>>>, tabId: number, entry: Record<string, unknown>): void {
   const entries = store.get(tabId) ?? [];
@@ -691,56 +741,153 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string)
   });
 }
 
-async function click(tabId: number, params: Record<string, unknown>): Promise<unknown> {
-  const { selector, xpath } = locator(params);
-  const allowCommentSend = params.allowCommentSend === true;
-  const allowChatSend = params.allowChatSend === true;
-  const result = await executeInPage<{ error?: string; blocked?: boolean; tag?: string; text?: string }>(tabId, (css: string, path: string, allowCommentSendControl: boolean, allowChatSendControl: boolean) => {
-    let element: Element | null = null;
-    if (css) { try { element = document.querySelector(css); } catch { /* try XPath */ } }
-    if (!element && path) { try { element = document.evaluate(path, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue as Element | null; } catch { /* invalid XPath */ } }
-    if (!element) return { error: 'Element not found' };
-    const text = [element.textContent, element.getAttribute('aria-label'), element.getAttribute('title'), element.getAttribute('value')]
-      .filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
-    const explicitSafe = /\b(save draft|draft|preview|cancel|back)\b|草稿|预览|取消|返回/i.test(text);
-    const finalPublish = /\b(publish|post|submit|release|send)\b|发布|提交|上线|发送/i.test(text);
-    const commentComposerContainsButton = Array.from(document.querySelectorAll('[contenteditable="true"]')).some((editor) => {
-      let ancestor: Element | null = editor.parentElement;
-      for (let depth = 0; ancestor && depth < 5; depth += 1, ancestor = ancestor.parentElement) {
-        if (ancestor.contains(element)) return true;
-      }
-      return false;
+/** Execute a page function bound to a ref-resolved DOM node (via `this`). */
+async function callOnNode<T>(tabId: number, entry: LocalRefEntry, func: (...args: any[]) => T, args: unknown[] = []): Promise<T> {
+  await ensureDebuggerAttached(tabId);
+  let objectId: string;
+  try {
+    const resolved = await sendDebuggerCommand<{ object?: { objectId?: string } }>(tabId, 'DOM.resolveNode', { backendNodeId: entry.backendNodeId, objectGroup: 'kv-bridge-ref' });
+    const candidate = resolved.object?.objectId;
+    if (!candidate) throw new ToolError('STALE_REF', `Ref ${entry.ref} no longer resolves to a page node`, false, { ref: entry.ref, tabId });
+    objectId = candidate;
+  } catch (error) {
+    if (error instanceof ToolError && (error.code === 'STALE_REF' || error.code === 'DEBUGGER_DETACHED')) throw error;
+    throw new ToolError('STALE_REF', `Ref ${entry.ref} no longer resolves to a page node`, false, { ref: entry.ref, tabId });
+  }
+  try {
+    const reply = await sendDebuggerCommand<{ result?: { value?: unknown }; exceptionDetails?: { text?: string; exception?: { description?: string } } }>(tabId, 'Runtime.callFunctionOn', {
+      objectId,
+      functionDeclaration: `function() { return (${func.toString()}).apply(this, arguments); }`,
+      arguments: args.map((value) => ({ value })),
+      returnByValue: true,
+      awaitPromise: false,
     });
-    const approvedCommentSend = allowCommentSendControl && text === '发送' && commentComposerContainsButton;
-    // Chat send controls (DeepSeek-style text buttons next to the input
-    // composer) are not content publication: they stay blocked unless a
-    // trusted caller (the KvGo engine) explicitly passes allowChatSend=true.
-    const chatComposerContainsButton = Array.from(document.querySelectorAll('textarea, [contenteditable="true"]')).some((composer) => {
-      let ancestor: Element | null = composer.parentElement;
-      for (let depth = 0; ancestor && depth < 5; depth += 1, ancestor = ancestor.parentElement) {
-        if (ancestor.contains(element)) return true;
-      }
-      return false;
-    });
-    const approvedChatSend = allowChatSendControl
-      && chatComposerContainsButton
-      && /发送|send/i.test(text)
-      && !/发布|提交|上线|publish|post|submit|release/i.test(text);
-    if (finalPublish && !explicitSafe && !approvedCommentSend && !approvedChatSend) return { blocked: true, text: text.slice(0, 160) };
-    (element as HTMLElement).scrollIntoView({ block: 'center', inline: 'center' });
-    (element as HTMLElement).click();
-    return { tag: element.tagName.toLowerCase(), text: (element.textContent ?? '').trim().slice(0, 160) };
-  }, [selector, xpath, allowCommentSend, allowChatSend]);
-  if (result.blocked) throw new ToolError('PREPUBLISH_BLOCKED', 'Clicking a final publish or submit control is disabled', false, { text: result.text });
-  if (result.error) throw new ToolError('ELEMENT_NOT_FOUND', result.error, false, { selector, xpath });
-  return { clicked: true, ...result };
+    if (reply.exceptionDetails) {
+      throw new ToolError('STALE_REF', reply.exceptionDetails.exception?.description ?? reply.exceptionDetails.text ?? `Ref ${entry.ref} could not be executed`, false, { ref: entry.ref, tabId });
+    }
+    return reply.result?.value as T;
+  } finally {
+    await sendDebuggerCommand(tabId, 'Runtime.releaseObjectGroup', { objectGroup: 'kv-bridge-ref' }).catch(() => undefined);
+  }
 }
 
-async function typeText(tabId: number, params: Record<string, unknown>): Promise<unknown> {
+function refTypeElement(this: Element, value: string, shouldClear: boolean): { error?: string; tag?: string } {
+  const element = this as Element;
+  const editable = element as HTMLInputElement | HTMLTextAreaElement | HTMLElement | null;
+  if (!(editable instanceof Element)) return { error: 'Ref target is not an element' };
+  if (editable instanceof HTMLInputElement || editable instanceof HTMLTextAreaElement) {
+    const prototype = editable instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
+    setter?.call(editable, shouldClear ? value : `${editable.value}${value}`);
+  } else if (editable.isContentEditable) {
+    editable.textContent = shouldClear ? value : `${editable.textContent ?? ''}${value}`;
+  } else return { error: 'Element is not editable' };
+  editable.focus();
+  editable.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: value }));
+  editable.dispatchEvent(new Event('change', { bubbles: true }));
+  return { tag: editable.tagName.toLowerCase() };
+}
+
+function refSelectElement(this: Element, wantedValue?: string, wantedLabel?: string): { error?: string; value?: string } {
+  const element = this as Element;
+  if (!(element instanceof HTMLSelectElement)) return { error: 'Element is not a select control' };
+  const option = Array.from(element.options).find((candidate) => candidate.value === wantedValue || candidate.label === wantedLabel || candidate.text === wantedLabel);
+  if (!option) return { error: 'Matching option not found' };
+  element.value = option.value;
+  element.dispatchEvent(new Event('input', { bubbles: true }));
+  element.dispatchEvent(new Event('change', { bubbles: true }));
+  return { value: element.value };
+}
+
+function refFocusElement(this: Element): { error?: string; tag?: string } {
+  const element = this as Element;
+  if (!(element instanceof Element)) return { error: 'Ref target is not an element' };
+  (element as HTMLElement).scrollIntoView({ block: 'center', inline: 'center' });
+  (element as HTMLElement).focus?.();
+  return { tag: element.tagName.toLowerCase() };
+}
+
+/** chrome.debugger adapter for the injected CDP runner used by cdp-input. */
+function debuggerRunner(tabId: number): CdpRunner {
+  return {
+    ensureAttached: () => ensureDebuggerAttached(tabId),
+    send: <T>(method: string, params?: Record<string, unknown>) => sendDebuggerCommand<T>(tabId, method, params),
+  };
+}
+
+/** chrome.debugger adapter that also forwards tab-scoped CDP events (upload). */
+function debuggerRunnerWithEvents(tabId: number): UploadRunner {
+  return {
+    ...debuggerRunner(tabId),
+    onEvent: (handler) => {
+      const listener = (source: { tabId?: number }, method: string, params: unknown) => {
+        if (source.tabId === tabId) handler(method, params);
+      };
+      chrome.debugger.onEvent.addListener(listener);
+      return { dispose: () => chrome.debugger.onEvent.removeListener(listener) };
+    },
+  };
+}
+
+/** Build the mandatory content-package validation context from tool params. */
+function uploadValidationFromParams(params: Record<string, unknown>): UploadValidation {
+  const packageRoot = typeof params.packageRoot === 'string' ? params.packageRoot : '';
+  let manifest: UploadManifest = { files: [] };
+  const raw = params.manifest;
+  const entries = Array.isArray(raw) ? raw : raw && typeof raw === 'object' && Array.isArray((raw as { files?: unknown }).files) ? (raw as { files: unknown[] }).files : [];
+  manifest = {
+    files: entries.filter((entry): entry is UploadManifestEntry =>
+      typeof (entry as { path?: unknown })?.path === 'string' && typeof (entry as { sha256?: unknown })?.sha256 === 'string'),
+  };
+  return { packageRoot, manifest };
+}
+
+/** Resolve a selector/xpath locator to a CDP backend node id. */
+async function backendNodeIdForLocator(tabId: number, params: Record<string, unknown>): Promise<number> {
   const { selector, xpath } = locator(params);
+  await ensureDebuggerAttached(tabId);
+  const nodeId = await nodeIdForLocator(tabId, selector, xpath);
+  const description = await sendDebuggerCommand<{ node?: { backendNodeId?: number } }>(tabId, 'DOM.describeNode', { nodeId });
+  if (typeof description.node?.backendNodeId !== 'number') {
+    throw new ToolError('ELEMENT_NOT_FOUND', 'Element has no backend node id', false, { selector, xpath });
+  }
+  return description.node.backendNodeId;
+}
+
+async function click(tabId: number, params: Record<string, unknown>, refTarget: ResolvedRefTarget | null = null): Promise<unknown> {
+  const allowCommentSend = params.allowCommentSend === true;
+  const backendNodeId = refTarget
+    ? refTarget.entry.backendNodeId
+    : await backendNodeIdForLocator(tabId, params);
+  const outcome = await dispatchClick(debuggerRunner(tabId), backendNodeId, { allowCommentSend });
+  if (!outcome.ok) {
+    throw new ToolError(outcome.error.code, outcome.error.message, false, {
+      effectState: outcome.error.effectState,
+      ...(refTarget ? { ref: refTarget.entry.ref } : {}),
+      ...outcome.error.details,
+    });
+  }
+  return {
+    clicked: true,
+    x: outcome.x,
+    y: outcome.y,
+    effectState: outcome.effectState,
+    ...(refTarget ? { ref: refTarget.entry.ref } : {}),
+    ...(outcome.tag ? { tag: outcome.tag } : {}),
+    ...(outcome.text ? { text: outcome.text } : {}),
+  };
+}
+
+async function typeText(tabId: number, params: Record<string, unknown>, refTarget: ResolvedRefTarget | null = null): Promise<unknown> {
   const text = typeof params.text === 'string' ? params.text : '';
   if (typeof params.text !== 'string') throw new ToolError('INVALID_TEXT', 'text is required');
   const clear = params.clear !== false;
+  if (refTarget) {
+    const result = await callOnNode<{ error?: string; tag?: string }>(tabId, refTarget.entry, refTypeElement, [text, clear]);
+    if (result.error) throw new ToolError('TYPE_FAILED', result.error, false, { ref: refTarget.entry.ref });
+    return { typed: true, characters: text.length, ref: refTarget.entry.ref, ...result };
+  }
+  const { selector, xpath } = locator(params);
   const result = await executeInPage<{ error?: string; tag?: string }>(tabId, (css: string, path: string, value: string, shouldClear: boolean) => {
     let element: Element | null = null;
     if (css) { try { element = document.querySelector(css); } catch { /* try XPath */ } }
@@ -775,7 +922,7 @@ async function focusWindowFor(tabId: number): Promise<void> {
   } catch { /* best effort: dispatching may still work in a focused window */ }
 }
 
-async function press(tabId: number, params: Record<string, unknown>): Promise<unknown> {
+async function press(tabId: number, params: Record<string, unknown>, refTarget: ResolvedRefTarget | null = null): Promise<unknown> {
   const key = typeof params.key === 'string' ? params.key : '';
   if (!key) throw new ToolError('INVALID_KEY', 'key is required');
   const parsedShortcut = key.split('+').map((part) => part.trim()).filter(Boolean);
@@ -785,16 +932,28 @@ async function press(tabId: number, params: Record<string, unknown>): Promise<un
   const modifierBits = modifierNames.reduce((bits, modifier) => bits | ({ Alt: 1, Control: 2, Meta: 4, Shift: 8 }[modifier] ?? 0), 0);
   await ensureDebuggerAttached(tabId);
   await focusWindowFor(tabId);
+  if (refTarget) {
+    const result = await callOnNode<{ error?: string; tag?: string }>(tabId, refTarget.entry, refFocusElement);
+    if (result.error) throw new ToolError('PRESS_FAILED', result.error, false, { ref: refTarget.entry.ref });
+    await sendDebuggerCommand(tabId, 'Input.dispatchKeyEvent', { type: 'keyDown', key: shortcutKey, modifiers: modifierBits });
+    await sendDebuggerCommand(tabId, 'Input.dispatchKeyEvent', { type: 'keyUp', key: shortcutKey, modifiers: modifierBits });
+    return { pressed: shortcutKey, modifiers: modifierNames, ref: refTarget.entry.ref, target: result.tag };
+  }
   await sendDebuggerCommand(tabId, 'Input.dispatchKeyEvent', { type: 'keyDown', key: shortcutKey, modifiers: modifierBits });
   await sendDebuggerCommand(tabId, 'Input.dispatchKeyEvent', { type: 'keyUp', key: shortcutKey, modifiers: modifierBits });
   return { pressed: shortcutKey, modifiers: modifierNames };
 }
 
-async function select(tabId: number, params: Record<string, unknown>): Promise<unknown> {
-  const { selector, xpath } = locator(params);
+async function select(tabId: number, params: Record<string, unknown>, refTarget: ResolvedRefTarget | null = null): Promise<unknown> {
   const value = typeof params.value === 'string' ? params.value : undefined;
   const label = typeof params.label === 'string' ? params.label : undefined;
   if (value == null && label == null) throw new ToolError('INVALID_SELECT_VALUE', 'value or label is required');
+  if (refTarget) {
+    const result = await callOnNode<{ error?: string; value?: string }>(tabId, refTarget.entry, refSelectElement, [value, label]);
+    if (result.error) throw new ToolError('SELECT_FAILED', result.error, false, { ref: refTarget.entry.ref, value, label });
+    return { selected: true, value: result.value, ref: refTarget.entry.ref };
+  }
+  const { selector, xpath } = locator(params);
   const result = await executeInPage<{ error?: string; value?: string }>(tabId, (css: string, path: string, wantedValue?: string, wantedLabel?: string) => {
     let element: Element | null = null;
     if (css) { try { element = document.querySelector(css); } catch { /* try XPath */ } }
@@ -831,22 +990,39 @@ async function nodeIdForLocator(tabId: number, selector: string, xpath: string):
   throw new ToolError('ELEMENT_NOT_FOUND', 'File input was not found', false, { selector, xpath });
 }
 
-async function setFiles(tabId: number, params: Record<string, unknown>): Promise<unknown> {
-  const { selector, xpath } = locator(params);
+async function setFiles(tabId: number, params: Record<string, unknown>, refTarget: ResolvedRefTarget | null = null): Promise<unknown> {
   const files = Array.isArray(params.files) ? params.files : [];
   if (!files.length || files.some((file) => typeof file !== 'string' || file.length < 4 || !/^[a-zA-Z]:$/.test(file.slice(0, 2)) || (file[2] !== '\\' && file[2] !== '/'))) {
     throw new ToolError('INVALID_FILE_PATH', 'files must contain local Windows absolute paths');
   }
-  await ensureDebuggerAttached(tabId);
-  const nodeId = await nodeIdForLocator(tabId, selector, xpath);
-  const description = await sendDebuggerCommand<{ node: { nodeName?: string; attributes?: string[] } }>(tabId, 'DOM.describeNode', { nodeId });
-  const attributes = description.node.attributes ?? [];
-  const typeIndex = attributes.findIndex((value) => value.toLowerCase() === 'type');
-  if (description.node.nodeName?.toLowerCase() !== 'input' || typeIndex < 0 || attributes[typeIndex + 1]?.toLowerCase() !== 'file') {
-    throw new ToolError('NOT_FILE_INPUT', 'The selected element is not an input[type=file]');
+  const backendNodeId = refTarget
+    ? refTarget.entry.backendNodeId
+    : await backendNodeIdForLocator(tabId, params);
+  const outcome = await uploadThroughActivatedFileInput({
+    runner: debuggerRunnerWithEvents(tabId),
+    tabId,
+    backendNodeId,
+    ...(refTarget ? { ref: refTarget.entry.ref } : {}),
+    ...(refTarget?.entry.frameId ? { frameId: refTarget.entry.frameId } : {}),
+    files,
+    validation: uploadValidationFromParams(params),
+    timeoutMs: 60_000,
+  });
+  if (!outcome.ok) {
+    throw new ToolError(outcome.code ?? 'UPLOAD_FAILED', outcome.message ?? 'upload failed', false, {
+      effectState: outcome.effectState,
+      phase: outcome.phase,
+      ...(refTarget ? { ref: refTarget.entry.ref } : {}),
+      ...outcome.details,
+    });
   }
-  await sendDebuggerCommand(tabId, 'DOM.setFileInputFiles', { nodeId, files });
-  return { files: files.map((file) => file.split(/[\\/]/).pop()), count: files.length };
+  return {
+    files: outcome.fileNames,
+    count: outcome.fileNames.length,
+    effectState: outcome.effectState,
+    phase: outcome.phase,
+    ...(refTarget ? { ref: refTarget.entry.ref } : {}),
+  };
 }
 
 async function waitFor(tabId: number, params: Record<string, unknown>): Promise<unknown> {
@@ -1016,10 +1192,26 @@ export async function handleBrowserRequest(request: BrowserRequest, connectionSt
         case 'find': result = await find(tabId, params); break;
         case 'snapshot': result = await snapshot(tabId, params); break;
         case 'screenshot': result = await screenshot(tabId); break;
-        case 'click': result = await click(tabId, params); break;
-        case 'type': result = await typeText(tabId, params); break;
-        case 'press': result = await press(tabId, params); break;
-        case 'select': result = await select(tabId, params); break;
+        case 'click': {
+          const refTarget = gateRef(params, tabId, connectionStatus);
+          result = await click(tabId, params, refTarget);
+          break;
+        }
+        case 'type': {
+          const refTarget = gateRef(params, tabId, connectionStatus);
+          result = await typeText(tabId, params, refTarget);
+          break;
+        }
+        case 'press': {
+          const refTarget = gateRef(params, tabId, connectionStatus);
+          result = await press(tabId, params, refTarget);
+          break;
+        }
+        case 'select': {
+          const refTarget = gateRef(params, tabId, connectionStatus);
+          result = await select(tabId, params, refTarget);
+          break;
+        }
         case 'evaluate': {
           const expression = typeof params.expression === 'string' ? params.expression : '';
           if (!expression) throw new ToolError('INVALID_EXPRESSION', 'expression is required');
@@ -1035,7 +1227,11 @@ export async function handleBrowserRequest(request: BrowserRequest, connectionSt
           result = await executeInPageMain(tabId, executeWebMcpToolInPage, [name, input]);
           break;
         }
-        case 'set_files': result = await setFiles(tabId, params); break;
+        case 'set_files': {
+          const refTarget = gateRef(params, tabId, connectionStatus);
+          result = await setFiles(tabId, params, refTarget);
+          break;
+        }
         case 'wait_for': result = await waitFor(tabId, params); break;
         case 'get_text': result = await getText(tabId, params); break;
         case 'get_url': result = await getUrl(tabId); break;

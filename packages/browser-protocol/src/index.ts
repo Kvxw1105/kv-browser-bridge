@@ -85,6 +85,100 @@ export type BrowserToolName = `browser_${BrowserAction}`;
 export type RuntimeToolName = 'browser_recipe_review' | 'browser_replay_start' | 'browser_replay_step' | 'browser_run_export' | 'browser_run_generate_guide';
 export type OperationClass = 'read' | 'non_idempotent_write';
 
+/**
+ * Upload transaction contract shared by the Bridge and MCP server. The
+ * extension runs the file-input state machine; `UploadEffectState` reports
+ * whether anything may have committed (`unknown` = never retry).
+ */
+export type UploadEffectState = 'none' | 'committed' | 'unknown';
+export type UploadPhase = 'validate' | 'arm_interception' | 'arm_input_probe' | 'trigger' | 'resolve_input' | 'set_files' | 'cleanup';
+
+export interface UploadResult {
+  tabId: number;
+  fileNames: string[];
+  effectState: UploadEffectState;
+  phase: UploadPhase;
+  ok: boolean;
+  code?: string;
+  message?: string;
+  details?: Record<string, unknown>;
+}
+
+export interface UploadManifestEntry {
+  path: string;
+  sha256: string;
+}
+
+/** Content-package context a caller must supply for a validated upload. */
+export interface UploadValidationParams {
+  packageRoot: string;
+  manifest: { files: UploadManifestEntry[] };
+}
+
+/**
+ * Effect classification of a browser operation. Drives what an ambiguous
+ * timeout/disconnect may do:
+ * - passive_read: no page state change; safe to retry on timeout/disconnect.
+ * - transient_input: transient input events (scroll, guarded click, key);
+ *   the page may have reacted, so a timeout is an unknown outcome.
+ * - browser_mutation: in-page state mutation (navigation, typing, select,
+ *   file input); a timeout/disconnect is an unknown outcome.
+ * - external_commit: may have committed something outside the page
+ *   (WebMCP tool execution); NEVER retry an unknown outcome.
+ * - control_plane: browser window/tab control (no page side effects); a
+ *   disconnect can safely reconnect.
+ */
+export type EffectClass = 'passive_read' | 'transient_input' | 'browser_mutation' | 'external_commit' | 'control_plane';
+
+/** Where a failure surfaced relative to dispatch. */
+export type FailurePhase = 'dispatch' | 'disconnect' | 'deadline';
+
+const effectClassForAction: Record<BrowserAction, EffectClass> = {
+  get_tabs: 'passive_read',
+  new_tab: 'control_plane',
+  switch_tab: 'control_plane',
+  scroll: 'transient_input',
+  find: 'passive_read',
+  close_tab: 'control_plane',
+  download_status: 'passive_read',
+  list_bookmarks: 'passive_read',
+  open_bookmark: 'control_plane',
+  list_extensions: 'passive_read',
+  navigate: 'browser_mutation',
+  snapshot: 'passive_read',
+  screenshot: 'passive_read',
+  click: 'transient_input',
+  type: 'browser_mutation',
+  press: 'transient_input',
+  select: 'browser_mutation',
+  evaluate: 'browser_mutation',
+  set_files: 'browser_mutation',
+  wait_for: 'passive_read',
+  get_text: 'passive_read',
+  get_url: 'passive_read',
+  console_logs: 'passive_read',
+  console_errors: 'passive_read',
+  network_requests: 'passive_read',
+  network_failures: 'passive_read',
+  get_response_body: 'passive_read',
+  inspect_element: 'passive_read',
+  get_element_styles: 'passive_read',
+  page_metrics: 'passive_read',
+  list_webmcp_tools: 'passive_read',
+  execute_webmcp_tool: 'external_commit',
+};
+
+export function effectClassFor(action: BrowserAction): EffectClass {
+  return effectClassForAction[action];
+}
+
+export function operationClassFor(action: BrowserAction): OperationClass {
+  // `execute_webmcp_tool` is a page-side write: an ambiguous timeout or
+  // disconnect must surface as UNKNOWN_OUTCOME so the caller never retries
+  // the tool call (WebMCP execution can have side effects on the page).
+  return effectClassFor(action) === 'passive_read' ? 'read' : 'non_idempotent_write';
+}
+
 export interface BrowserRequest {
   type: 'browser:request';
   requestId: string;
@@ -233,7 +327,6 @@ export function operationClassFor(action: BrowserAction): OperationClass {
   return new Set<BrowserAction>(['get_tabs', 'find', 'download_status', 'list_bookmarks', 'list_extensions', 'snapshot', 'screenshot', 'wait_for', 'get_text', 'get_url', 'console_logs', 'console_errors', 'network_requests', 'network_failures', 'get_response_body', 'inspect_element', 'get_element_styles', 'page_metrics', 'record_status', 'list_webmcp_tools']).has(action)
     ? 'read' : 'non_idempotent_write';
 }
-
 export function deadlineExpired(deadlineAt: unknown, now = Date.now()): boolean {
   return typeof deadlineAt === 'number' && Number.isFinite(deadlineAt) && deadlineAt <= now;
 }

@@ -4,7 +4,8 @@
     "jsx": "react-jsx",
     "outDir": "./dist",
     "rootDir": "./src",
-    "lib": ["ES2022", "DOM", "DOM.Iterable"]
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "allowImportingTsExtensions": true
   },
   "include": ["src"]
 }

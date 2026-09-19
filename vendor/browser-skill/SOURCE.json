@@ -2,29 +2,46 @@
   "repository": "https://github.com/Tencent/BrowserSkill",
   "commit": "fa953dc6fcd868827b93164e3bea26198e691224",
   "license": "MIT",
-  "vendorPath": "packages/vom/src",
+  "licenseUrl": "https://github.com/Tencent/BrowserSkill/blob/fa953dc6/LICENSE",
+  "copiedAt": "2026-09-19",
   "copied_paths": [
     "packages/vom/src/index.ts",
     "packages/vom/src/types.ts",
     "packages/vom/src/layers.ts",
-    "packages/vom/src/render.ts"
+    "packages/vom/src/render.ts",
+    "apps/extension/src/session-manager/ref-store.ts",
+    "apps/extension/src/tools/file-input-transaction.ts",
+    "apps/extension/src/tools/file-drop-transaction.ts",
+    "apps/extension/src/tools/transfer-transaction.ts"
   ],
   "excluded_paths": [
     "packages/vom/package.json",
     "packages/vom/tsconfig.json",
     "packages/vom/vitest.config.ts",
-    "packages/vom/src/__tests__/layers.test.ts",
-    "packages/vom/src/__tests__/render.test.ts",
-    "apps/",
-    "crates/",
-    "scripts/",
-    "skill/",
-    "evals/"
+    "packages/vom/src/__tests__/**",
+    "crates/**",
+    "scripts/**",
+    "skill/**",
+    "evals/**",
+    "transport/**",
+    "daemon/**",
+    "**/native-messaging/**",
+    "**/named-pipe/**",
+    "**/mcp/**",
+    "**/credentials/**",
+    "**/browser-profile/**",
+    "**/cookie*/**",
+    "**/tools/interaction.ts",
+    "**/tools/shared.ts",
+    "**/tools/errors.ts",
+    "**/tools/frame-geometry.ts",
+    "**/tools/visual-discovery.ts"
   ],
   "policy": {
-    "scope": "Pure VOM rendering algorithm only. Copied and aggressively adapted to the local package contract (@kv-browser-bridge/vom) and local import style.",
-    "prohibited": "No credentials, browser profiles, cookies, transport, daemon, or branding copied.",
-    "boundaries": "Local identity, credential, Native Messaging, Named Pipe, MCP, and publish boundaries follow Kv Browser Bridge rules. CDP input/upload/session-queue/top-level adapter code stays local.",
-    "attribution": "See THIRD_PARTY_NOTICES.md for full attribution."
+    "scope": "Pure VOM and transaction/ref state-machine algorithms are copied and adapted to the local bridge.",
+    "local_implementation": "Local compiled behavior is implemented under packages/vom and apps/extension/src/background/*.",
+    "adaptation": "Relative imports and package targets were adapted for the local ESM/Vite/tsc toolchain. Ref ownership, CDP input, upload validation, effect classification, and structured failure codes are local additions.",
+    "prohibited": "Credentials, browser profiles, cookies, transport, daemon, Native Messaging, Named Pipe, MCP, branding, and publish machinery were not copied.",
+    "publish_boundary": "Local identity, credential, Native Messaging, Named Pipe, MCP, and publish boundaries remain governed by Kv Browser Bridge rules."
   }
 }

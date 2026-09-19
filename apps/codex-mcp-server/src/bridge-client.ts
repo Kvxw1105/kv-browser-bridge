@@ -2,7 +2,7 @@ import { createConnection, type Socket } from 'node:net';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { healthState, operationClassForMethod, PerTabWriteQueue, timeoutErrorForMethod } from './reliability.js';
+import { disconnectOutcomeFor, effectClassForMethod, healthState, operationClassForMethod, PerTabWriteQueue, timeoutErrorForMethod, timeoutOutcomeFor, type EffectClass } from './reliability.js';
 import { createClientIdentity, type ClientIdentity } from './client-identity.js';
 
 export type BridgeErrorCode =
@@ -37,6 +37,7 @@ type PendingRequest = {
   reject: (error: BridgeError) => void;
   timer: NodeJS.Timeout;
   operationClass: 'read' | 'non_idempotent_write';
+  effectClass: EffectClass;
   method: string;
 };
 type BridgeResponse = { id?: string; result?: unknown; error?: unknown };
@@ -176,13 +177,14 @@ export class BridgeClient {
 
   private requestOnce(method: string, params: Record<string, unknown>, timeoutMs: number, operationClass: 'read' | 'non_idempotent_write', idempotencyKey: string): Promise<unknown> {
     const id = crypto.randomUUID();
+    const effectClass = effectClassForMethod(method);
     return new Promise<unknown>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        const timeout = timeoutErrorForMethod(method);
-        reject(new BridgeError(timeout.code, `${method} exceeded ${timeoutMs}ms.`, timeout.retryable, { operationClass }));
+        const outcome = timeoutOutcomeFor(method);
+        reject(new BridgeError(outcome.code, `${method} exceeded ${timeoutMs}ms.`, outcome.retryable, { operationClass, effectClass: outcome.effectClass, phase: outcome.phase }));
       }, timeoutMs);
-      this.pending.set(id, { resolve, reject, timer, method, operationClass });
+      this.pending.set(id, { resolve, reject, timer, method, operationClass, effectClass });
       this.write({ id, method, params, timeoutMs, deadlineAt: Date.now() + timeoutMs, sessionId: this.sessionId, operationClass, idempotencyKey });
     });
   }
@@ -293,7 +295,7 @@ export class BridgeClient {
         this.pending.delete(id);
         reject(new BridgeError('BRIDGE_TIMEOUT', `${method} exceeded ${timeoutMs}ms.`, true));
       }, timeoutMs);
-      this.pending.set(id, { resolve, reject, timer, method, operationClass: 'read' });
+      this.pending.set(id, { resolve, reject, timer, method, operationClass: 'read', effectClass: 'passive_read' });
       this.write({ id, method, params, timeoutMs, deadlineAt: Date.now() + timeoutMs });
     });
   }
@@ -379,8 +381,9 @@ export class BridgeClient {
   private rejectPending(readError: BridgeError): void {
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timer);
-      pending.reject(pending.operationClass === 'non_idempotent_write'
-        ? new BridgeError('UNKNOWN_OUTCOME', `${pending.method} may have completed before the Chrome Bridge disconnected.`, false)
+      const outcome = disconnectOutcomeFor(pending.effectClass);
+      pending.reject(outcome.code === 'UNKNOWN_OUTCOME'
+        ? new BridgeError('UNKNOWN_OUTCOME', `${pending.method} may have completed before the Chrome Bridge disconnected.`, false, { operationClass: pending.operationClass, effectClass: outcome.effectClass, phase: outcome.phase })
         : readError);
     }
     this.pending.clear();

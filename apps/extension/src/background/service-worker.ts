@@ -1,6 +1,5 @@
-import { clearSelectedTab, getSelectedTabId, handleBrowserRequest, setSelectedTab, type BrowserResponse } from './browser-executor';
+import { clearSelectedTab, getSelectedTabId, handleBrowserRequest, invalidateRefsForSession, setSelectedTab, type BrowserResponse } from './browser-executor';
 import { flowRecordingStatus, recordFlowUserEvent, startFlowRecording, stopFlowRecording } from './flow-recorder';
-
 
 console.info('[kv-browser-bridge-extension]', JSON.stringify({ event: 'service_worker_module_loaded', at: new Date().toISOString() }));
 
@@ -96,6 +95,12 @@ function postNative(message: unknown): void {
 }
 
 function acknowledgeIdentity(identity: BridgeIdentity | undefined): void {
+  // An identity/runtime-session switch invalidates every ref observed under
+  // the previous session: refs must never be replayed across identities.
+  const previous = activeIdentity;
+  if (previous?.identityId && (previous.identityId !== identity?.identityId || previous.runtimeSessionId !== identity?.runtimeSessionId)) {
+    invalidateRefsForSession(previous.identityId, previous.runtimeSessionId ?? '');
+  }
   activeIdentity = identity;
   const manifest = chrome.runtime.getManifest();
   postNative({
