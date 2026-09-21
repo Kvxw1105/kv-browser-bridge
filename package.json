@@ -27,7 +27,7 @@
     "chrome": "/Applications/Google\\ Chrome.app/Contents/MacOS/Google\\ Chrome --remote-debugging-port=9222 --user-data-dir=/tmp/chrome-ccb",
     "dev:server": "npm run dev -w apps/server",
     "dev:extension": "npm run dev -w apps/extension",
-    "build:extension": "npm run build -w apps/extension",
+    "build:extension": "npm run build -w packages/vom && npm run build -w apps/extension",
     "build:server": "npm run build -w apps/server",
     "build:host": "npm run build -w apps/host",
     "build:windows-uia": "dotnet build apps/windows-uia-driver/Kv.WindowsUia.Driver.csproj -c Release --nologo",
