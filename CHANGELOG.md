@@ -25,7 +25,17 @@
 - 网络隔离 Observe 验收：PASS（公网 IP 会话绑定、mDNS 接受、DNS-unverified 不停止、隔离清理）
 - 桌面安装器闭环：安装 → 卸载 → 重装全验证（升级路径：安装器覆盖同版本/跨版本安装）
 
-## [0.3.1] - 2026-08-11（桌面控制中心接线）
+## [0.3.1] - 2026-09-21（BrowserSkill runtime 与 Agent 部署体验）
+
+### BrowserSkill integration
+- 引入 VOM（Virtual Object Model，稳定的语义元素引用）、RefStore（跨导航引用生命周期）和事务化文件上传能力，接入本地 Chrome Bridge 主路径。
+- 保留 identity / Profile / 代理 IP 预检、Native Messaging、Named Pipe、MCP 和发布授权闸，不复制上游 daemon 或品牌素材。
+- 开源 Agent 安装入口：`AGENT_INSTALL.md`、`skills/kv-browser-bridge/SKILL.md`，支持任意 Agent 复制安装提示词完成 Skill 配置。
+- 扩展 Setup 面板增加可展开的一键部署提示词与复制操作，降低从插件到 Agent 的首次配置成本。
+
+### Release engineering
+- clean runner 构建扩展前先构建 `packages/vom`，修复全新环境无法解析 `@kv-browser-bridge/vom` 的 CI 问题。
+- 本地 release-check 覆盖 .NET 8 Windows UIA build、263 个 Chrome Bridge 测试（262 pass / 1 skip）、扩展打包与 npm pack dry-run。
 
 ### Fixed
 - 桌面身份控制台与 CLI 身份运行时统一（同一世界）：manifest 存储改到
