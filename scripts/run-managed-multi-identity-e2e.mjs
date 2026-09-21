@@ -1,10 +1,10 @@
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { IdentityRuntime } from '../apps/chrome-bridge/dist/identity/session.js';
 import { SessionSupervisor } from '../apps/chrome-bridge/dist/identity/session-supervisor.js';
 import { ChromePipeProcessAdapter } from '../apps/chrome-bridge/dist/identity/chrome-process-adapter.js';
+import { chromeExtensionIdFromManifest } from './chrome-extension-id.mjs';
 
 const repo = resolve('.');
 const root = resolve(process.env.MANAGED_E2E_ROOT ?? 'local/e2e-managed-multi-identity-pipe');
@@ -14,6 +14,7 @@ const manifestRoot = join(root, 'manifests');
 const evidencePath = join(root, 'acceptance-report.json');
 const chromePath = process.argv[2] ?? 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 const extensionPath = resolve(process.argv[3] ?? 'apps/extension/dist');
+const extensionId = chromeExtensionIdFromManifest(extensionPath);
 const ids = ['managed-alpha-a', 'managed-alpha-b'];
 const report = { schemaVersion: 1, generatedAt: new Date().toISOString(), chromeFlavor: 'official', identityIds: ids, extensionPath, checks: [], ok: false };
 
@@ -30,9 +31,9 @@ process.env.KV_BROWSER_CHROME_STDERR_DIR = join(root, 'chrome-stderr');
 process.env.KV_BROWSER_CHROME_VERBOSE_LOGGING = '1';
 delete process.env.KV_BROWSER_EXTENSION_PATH;
 
-const extensionId = chromeUnpackedExtensionId(extensionPath);
 report.extensionId = extensionId;
-const install = spawnSync(process.execPath, [join(repo, 'apps/chrome-bridge/dist/install.js'), 'install', extensionId], { cwd: repo, encoding: 'utf8', windowsHide: true });
+const nativeHostEnv = { ...process.env };
+const install = spawnSync(process.execPath, [join(repo, 'apps/chrome-bridge/dist/install.js'), 'install', extensionId], { cwd: repo, encoding: 'utf8', windowsHide: true, env: nativeHostEnv });
 writeFileSync(join(root, 'native-host-install.log'), `${install.stdout ?? ''}${install.stderr ?? ''}`, 'utf8');
 if (install.status !== 0) return fail('NATIVE_HOST_INSTALL_FAILED', 'Native Messaging Host installation failed.');
 
@@ -43,7 +44,14 @@ if (process.env.MANAGED_E2E_LOCALAPPDATA) process.env.LOCALAPPDATA = resolve(pro
 const manifests = Object.fromEntries(ids.map((id) => [id, createManifest(id)]));
 const adapter = new ChromePipeProcessAdapter();
 const runtime = new IdentityRuntime(runtimeRoot, adapter);
-const supervisor = new SessionSupervisor(runtimeRoot, { runtime, processAdapter: adapter, extensionPath, env: process.env, bridgeTimeoutMs: 30_000 });
+const supervisor = new SessionSupervisor(runtimeRoot, {
+  runtime,
+  processAdapter: adapter,
+  extensionPath,
+  env: process.env,
+  bridgeTimeoutMs: 30_000,
+  onExtensionProvisioned: (actualExtensionId) => registerNativeHost(actualExtensionId),
+});
 const started = {};
 
 try {
@@ -122,11 +130,16 @@ function countFiles(directory) {
   try { return statSync(directory).isDirectory() ? readFileSync(join(directory, 'Local State'), 'utf8').length > 0 ? 1 : 0 : 0; } catch { return 0; }
 }
 
-function chromeUnpackedExtensionId(path) {
-  const hash = createHash('sha256').update(path, 'utf16le').digest();
-  let id = '';
-  for (const byte of hash.subarray(0, 16)) id += String.fromCharCode(97 + (byte >> 4), 97 + (byte & 15));
-  return id;
+function registerNativeHost(actualExtensionId) {
+  if (actualExtensionId === extensionId) return { ok: true };
+  const result = spawnSync(process.execPath, [join(repo, 'apps/chrome-bridge/dist/install.js'), 'install', actualExtensionId], {
+    cwd: repo,
+    encoding: 'utf8',
+    windowsHide: true,
+    env: nativeHostEnv,
+  });
+  if (result.status === 0) return { ok: true };
+  return { ok: false, error: String(result.stderr ?? result.stdout ?? '').trim().slice(0, 300) || 'Native Messaging registration failed.' };
 }
 
 function writeReport() { writeFileSync(evidencePath, `${JSON.stringify(report, null, 2)}\n`, 'utf8'); process.stdout.write(`${JSON.stringify(report, null, 2)}\n`); }

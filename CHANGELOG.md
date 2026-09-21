@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.3.2] - 2026-09-21（本地 Chrome 安装与隔离验收修复）
+
+### Fixed
+- 根据扩展 manifest 的稳定公钥计算真实 Chrome extension ID，修复 Native Messaging 注册与 managed Chrome 验收使用路径哈希导致的握手失败。
+- managed bootstrap 与 multi-identity E2E 在扩展已使用相同 Native Host 时复用注册，避免 Windows 文件占用竞态。
+- 修复 multi-identity 验收脚本的 extension ID 作用域错误。
+
+### Changed
+- `npm run install-local-chrome` 自动从 `apps/extension/dist/manifest.json` 计算 extension ID 并完成 Native Messaging 注册。
+- 隔离验收将 Bridge discovery、日志和运行时状态放入受控目录，不污染当前用户的 Chrome Bridge 状态。
+
 ## [0.3.0] - 2026-08-11
 
 首个统一版本：Browser Bridge、Computer Use、身份隔离、桌面控制台全部指向同一版本。

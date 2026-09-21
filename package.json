@@ -15,7 +15,7 @@
     "apps/*"
   ],
   "scripts": {
-    "test": "npm run test:branding && npm run test:identity-setup && npm run test:prepare-identity-config && npm run test:runtime-discovery && npm run test:local-chrome && node --test test/release-engineering.test.mjs test/desktop-packaging.test.mjs test/desktop-identity-dir.test.mjs",
+    "test": "npm run test:branding && npm run test:extension-id && npm run test:identity-setup && npm run test:prepare-identity-config && npm run test:runtime-discovery && npm run test:local-chrome && node --test test/release-engineering.test.mjs test/desktop-packaging.test.mjs test/desktop-identity-dir.test.mjs",
     "check": "npm run check:local-chrome && npm run check:desktop && node scripts/check-versions.mjs",
     "package": "npm run build:extension && node scripts/package-extension.mjs",
     "release-check": "npm run test && npm run check && npm run package && node scripts/validate-npm-pack.mjs",
@@ -42,6 +42,7 @@
     "test:local-chrome": "npm run build -w packages/browser-protocol -w apps/chrome-bridge && npm run build:codex-mcp && npm run build:windows-uia && node --test packages/browser-protocol/test/*.test.mjs apps/chrome-bridge/test/*.test.mjs apps/codex-mcp-server/test/*.test.mjs apps/windows-uia-driver/test/*.test.mjs",
     "test:windows-uia-e2e": "npm run build:windows-uia && set KV_RUN_UIA_E2E=1&& node --test apps/windows-uia-driver/test/driver.test.mjs",
     "test:branding": "node --test test/branding.test.mjs",
+    "test:extension-id": "node --test test/extension-id.test.mjs",
     "test:identity-setup": "node --test test/network-identity-setup.test.mjs",
     "test:prepare-identity-config": "node --test test/prepare-network-identity-config.test.mjs",
     "test:runtime-discovery": "node --test test/windows-network-runtime-discovery.test.mjs",
@@ -50,7 +51,7 @@
     "dev:web": "npm run build -w packages/shared -w packages/agent-core && concurrently -n server,web -c blue,green \"npm run dev -w apps/server\" \"npm run dev:web -w apps/desktop\"",
     "build:web": "npm run build -w packages/shared -w packages/agent-core && npm run build:web -w apps/desktop && npm run build -w apps/server",
     "start:web": "npm run build:web && node apps/server/dist/index.js",
-    "install-local-chrome": "npm run build:local-chrome && node apps/chrome-bridge/dist/install.js install",
+    "install-local-chrome": "npm run build:local-chrome && node scripts/install-local-chrome.mjs",
     "uninstall-local-chrome": "node apps/chrome-bridge/dist/install.js uninstall",
     "doctor-local-chrome": "node apps/chrome-bridge/dist/install.js doctor --json",
     "prepare-computer-use": "npm run build:local-chrome",

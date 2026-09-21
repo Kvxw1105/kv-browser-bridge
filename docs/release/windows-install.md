@@ -8,6 +8,16 @@ npm run build:local-chrome
 node apps/chrome-bridge/dist/install.js install <extension-id>
 ```
 
+For the repository's built extension, the recommended shortcut computes the
+stable ID from the manifest key and performs the registration automatically:
+
+~~~powershell
+npm run install-local-chrome
+~~~
+
+Use the manual command above only when registering a different unpacked
+extension directory.
+
 The installer accepts only a Chrome extension ID and writes the Kv Native Messaging manifest under the current user's Chrome data directory. It registers only `io.kv.browser_bridge` in `HKCU\Software\Google\Chrome\NativeMessagingHosts`. The manifest and its wrapper are written atomically, checked against the registry value, and are restored if registration or verification fails. Existing non-Kv artifacts are never overwritten.
 
 Reload the extension (or restart Chrome) after a successful install.

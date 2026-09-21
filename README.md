@@ -30,6 +30,13 @@ npm install
 npm run build:local-chrome
 ```
 
+The one-command installer builds the local runtime and registers the Native
+Messaging host for the extension ID declared by `apps/extension/dist/manifest.json`:
+
+~~~powershell
+npm run install-local-chrome
+~~~
+
 Then load `apps/extension/dist` from `chrome://extensions` using **Load unpacked**. Copy its extension ID and register the host with that exact ID:
 
 ```powershell

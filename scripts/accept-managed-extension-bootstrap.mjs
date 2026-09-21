@@ -1,7 +1,7 @@
-import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { chromeExtensionIdFromManifest } from './chrome-extension-id.mjs';
 import { IdentityRuntime } from '../apps/chrome-bridge/dist/identity/session.js';
 import { SessionSupervisor } from '../apps/chrome-bridge/dist/identity/session-supervisor.js';
 import { ChromePipeProcessAdapter } from '../apps/chrome-bridge/dist/identity/chrome-process-adapter.js';
@@ -16,7 +16,8 @@ const chromePath = process.argv[2] ?? 'C:\\Program Files\\Google\\Chrome\\Applic
 const extensionPath = resolve(process.argv[3] ?? 'apps/extension/dist');
 const identityId = 'managed-bootstrap';
 const workspaceId = 'managed-alpha';
-const extensionId = chromeUnpackedExtensionId(extensionPath);
+const extensionId = chromeExtensionIdFromManifest(extensionPath);
+const nativeHostEnv = { ...process.env };
 const report = {
   schemaVersion: 1,
   generatedAt: new Date().toISOString(),
@@ -47,14 +48,25 @@ async function main() {
   process.env.KV_BROWSER_CHROME_VERBOSE_LOGGING = '1';
   delete process.env.KV_BROWSER_EXTENSION_PATH;
 
-  const install = spawnSync(process.execPath, [join(repo, 'apps/chrome-bridge/dist/install.js'), 'install', extensionId], { cwd: repo, encoding: 'utf8', windowsHide: true });
+  const install = spawnSync(process.execPath, [join(repo, 'apps/chrome-bridge/dist/install.js'), 'install', extensionId], { cwd: repo, encoding: 'utf8', windowsHide: true, env: nativeHostEnv });
   writeFileSync(join(root, 'native-host-install.log'), `${install.stdout ?? ''}${install.stderr ?? ''}`, 'utf8');
   if (install.status !== 0) return fail('NATIVE_HOST_INSTALL_FAILED', 'Native Messaging Host installation failed.');
+
+  // Keep discovery, logs, and managed Bridge state out of the user's active
+  // runtime. The HKCU Native Messaging registration remains shared by design.
+  process.env.LOCALAPPDATA = join(root, 'localappdata');
 
   manifest = createManifest();
   const adapter = new ChromePipeProcessAdapter();
   const runtime = new IdentityRuntime(runtimeRoot, adapter);
-  supervisor = new SessionSupervisor(runtimeRoot, { runtime, processAdapter: adapter, extensionPath, env: process.env, bridgeTimeoutMs: 30_000 });
+  supervisor = new SessionSupervisor(runtimeRoot, {
+    runtime,
+    processAdapter: adapter,
+    extensionPath,
+    env: process.env,
+    bridgeTimeoutMs: 30_000,
+    onExtensionProvisioned: (actualExtensionId) => registerNativeHost(actualExtensionId),
+  });
 
   const first = await supervisor.start(manifest);
   if (!first.ok) return fail(first.snapshot.error?.code ?? 'FIRST_START_FAILED', first.snapshot.error?.message ?? 'First managed bootstrap failed.');
@@ -135,9 +147,14 @@ async function waitForArtifactsToClear(runtimeSessionId) {
 function writeReport() { writeFileSync(evidencePath, `${JSON.stringify(report, null, 2)}\n`, 'utf8'); process.stdout.write(`${JSON.stringify(report, null, 2)}\n`); }
 function fail(code, message) { report.completedAt = new Date().toISOString(); report.error = { code, message }; writeReport(); process.exitCode = 1; }
 
-function chromeUnpackedExtensionId(path) {
-  const hash = createHash('sha256').update(path, 'utf16le').digest();
-  let id = '';
-  for (const byte of hash.subarray(0, 16)) id += String.fromCharCode(97 + (byte >> 4), 97 + (byte & 15));
-  return id;
+function registerNativeHost(actualExtensionId) {
+  if (actualExtensionId === extensionId) return { ok: true };
+  const result = spawnSync(process.execPath, [join(repo, 'apps/chrome-bridge/dist/install.js'), 'install', actualExtensionId], {
+    cwd: repo,
+    encoding: 'utf8',
+    windowsHide: true,
+    env: nativeHostEnv,
+  });
+  if (result.status === 0) return { ok: true };
+  return { ok: false, error: String(result.stderr ?? result.stdout ?? '').trim().slice(0, 300) || 'Native Messaging registration failed.' };
 }
