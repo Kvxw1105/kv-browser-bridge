@@ -163,6 +163,10 @@ const effectClassForAction: Record<BrowserAction, EffectClass> = {
   inspect_element: 'passive_read',
   get_element_styles: 'passive_read',
   page_metrics: 'passive_read',
+  record_start: 'control_plane',
+  record_stop: 'control_plane',
+  record_status: 'passive_read',
+  record_note: 'control_plane',
   list_webmcp_tools: 'passive_read',
   execute_webmcp_tool: 'external_commit',
 };
@@ -319,13 +323,6 @@ export interface BridgeConnectionStatus {
   extensionHandshake?: ExtensionHandshakeStatus;
 }
 
-export function operationClassFor(action: BrowserAction): OperationClass {
-  // `execute_webmcp_tool` is a page-side write: an ambiguous timeout or
-  // disconnect must surface as UNKNOWN_OUTCOME so the caller never retries
-  // the tool call (WebMCP execution can have side effects on the page).
-  return new Set<BrowserAction>(['get_tabs', 'find', 'download_status', 'list_bookmarks', 'list_extensions', 'snapshot', 'screenshot', 'wait_for', 'get_text', 'get_url', 'console_logs', 'console_errors', 'network_requests', 'network_failures', 'get_response_body', 'inspect_element', 'get_element_styles', 'page_metrics', 'record_status', 'list_webmcp_tools']).has(action)
-    ? 'read' : 'non_idempotent_write';
-}
 export function deadlineExpired(deadlineAt: unknown, now = Date.now()): boolean {
   return typeof deadlineAt === 'number' && Number.isFinite(deadlineAt) && deadlineAt <= now;
 }
