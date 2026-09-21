@@ -4,27 +4,14 @@ param(
   [switch]$Force
 )
 
-$source = Join-Path $PSScriptRoot '..\skills\kv-browser-bridge\SKILL.md'
-$source = [System.IO.Path]::GetFullPath($source)
-$target = Join-Path $Destination 'SKILL.md'
-
-if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
-  throw "Canonical Kv Browser Bridge Skill was not found: $source"
+$installer = Join-Path $PSScriptRoot 'install-agent-skill.mjs'
+if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) {
+  throw "Agent Skill installer was not found: $installer"
 }
 
-if (Test-Path -LiteralPath $target -PathType Leaf) {
-  $sameContent = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash -eq
-    (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash
-  if ($sameContent) {
-    Write-Output "Kv Browser Bridge Skill is already current: $target"
-    exit 0
-  }
-
-  if (-not $Force) {
-    throw "A different Skill already exists at $target. Re-run with -Force only after reviewing it."
-  }
+$arguments = @($installer, '--destination', $Destination, '--json')
+if ($Force) { $arguments += '--force' }
+& node @arguments
+if ($LASTEXITCODE -ne 0) {
+  exit $LASTEXITCODE
 }
-
-New-Item -ItemType Directory -Path $Destination -Force | Out-Null
-Copy-Item -LiteralPath $source -Destination $target -Force
-Write-Output "Installed Kv Browser Bridge Skill: $target"

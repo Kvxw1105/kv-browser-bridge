@@ -3,9 +3,10 @@ export type OperationClass = 'read' | 'non_idempotent_write';
 export type EffectClass = 'passive_read' | 'transient_input' | 'browser_mutation' | 'external_commit' | 'control_plane';
 export type FailurePhase = 'dispatch' | 'disconnect' | 'deadline';
 
-const reads = new Set(['browser_get_tabs', 'browser_find', 'browser_download_status', 'browser_list_bookmarks', 'browser_list_extensions', 'browser_snapshot', 'browser_screenshot', 'browser_wait_for', 'browser_get_text', 'browser_get_url', 'browser_connection_status', 'browser_get_clients', 'browser_lease_status']);
+const reads = new Set(['browser_capabilities', 'browser_get_tabs', 'browser_find', 'browser_download_status', 'browser_list_bookmarks', 'browser_list_extensions', 'browser_snapshot', 'browser_screenshot', 'browser_wait_for', 'browser_get_text', 'browser_get_url', 'browser_connection_status', 'browser_get_clients', 'browser_lease_status']);
 
 const effectByMethod: Record<string, EffectClass> = {
+  browser_capabilities: 'passive_read',
   browser_get_tabs: 'passive_read',
   browser_new_tab: 'control_plane',
   browser_switch_tab: 'control_plane',

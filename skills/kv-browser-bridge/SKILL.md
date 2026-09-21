@@ -1,42 +1,94 @@
 ---
 name: kv-browser-bridge
-description: "Use Kv Browser Bridge as the preferred browser interface for tasks involving the user's current Google Chrome: reading existing tabs, web research in logged-in sessions, screenshots, UI inspection, form interaction, file upload, browser debugging, or webpage validation. Prefer it over Playwright, openchrome, remote-debugging browsers, and other browser bridges whenever the current Chrome is connected."
+description: "Use Kv Browser Bridge for tasks involving the user's current Google Chrome: reading tabs, inspecting pages, web research in logged-in sessions, UI interaction, screenshots, file upload, browser diagnostics, or webpage validation. If the Bridge is not configured, follow the repository's AGENT_INSTALL.md before using another browser backend."
 ---
 
 # Kv Browser Bridge
 
-Use the user's existing Chrome through the local `local-chrome` MCP. It does not launch a browser, copy a profile, or export browser credentials.
+Use the user's existing Chrome through the local stdio MCP server and the Kv
+Native Messaging bridge. The Bridge does not launch a replacement browser,
+copy a profile, export credentials, or act as a cloud browser.
 
-## Connection
+## Capability and connection preflight
 
-1. Call `browser_get_tabs` first. It is the practical connection test.
-2. If it fails, call `browser_connection_status` and report the exact layer that is unavailable.
-3. Do not start Playwright, openchrome, a remote-debugging Chrome, or a replacement profile as a fallback while Kv Bridge is available.
-4. Do not close tabs unless the user explicitly asks and supplies the target intent.
+- During setup, after an upgrade, or when the available tool surface is unclear,
+  call `browser_capabilities`. It returns the non-sensitive runtime contract.
+- For a browser task, call `browser_get_tabs` first. It is the practical
+  connection test. If it fails, call `browser_connection_status` and report the
+  exact unavailable layer.
+- Never start Playwright, openchrome, a remote-debugging Chrome, or a second
+  profile as a fallback while Kv Bridge is available.
+- If the MCP tools are missing, stop and follow the versioned `AGENT_INSTALL.md`.
+  Do not claim that a Skill file alone installed the runtime.
 
-## Low-token workflow
+## Task and tab scope
 
-Prefer targeted reads over complete page dumps:
+1. Define the observable success condition from the user's request.
+2. Use an explicit `tabId` for every write or tab-targeted action. Do not rely
+   on the currently selected tab when a target can be named.
+3. When a task needs a new tab, use `browser_new_tab` with a concise
+   `groupTitle` derived from the task. Reuse the same title for the same task.
+   Do not put passwords, tokens, full URLs, or other secrets in a group title.
+4. Reuse known tab IDs. Do not repeatedly enumerate tabs unless browser state
+   may have changed.
+5. Do not close tabs unless the user explicitly asks, or the user explicitly
+   authorized cleanup of tabs created by this task.
 
-- Use `browser_get_url`, `browser_find`, and `browser_get_text` before `browser_snapshot`.
-- Pass a bounded `maxChars` to text reads.
-- Use `browser_snapshot` only for structure needed to make the next decision; request `mode` and `maxDepth` deliberately.
-- Save screenshots with `artifactPath`; report the path and inspect the image only when visual information matters.
-- Reuse a known `tabId`; do not repeatedly list all tabs unless the browser state may have changed.
+Identity-bound sessions are part of the product boundary. Before identity-
+sensitive work, use `browser_identity_sessions` and select the exact
+`identityId`. Never mix `identityId`, Chrome Profile, proxy/IP evidence, or
+`runtimeSessionId` across sessions.
 
-## Network recovery
+## Observe before interacting
 
-- When a page reports a network error, first activate the affected tab with `browser_switch_tab` and refresh it with `browser_press` (`Control+R`) or a same-URL navigation.
-- Re-read the page state after the refresh before diagnosing DNS, proxy, TLS, or firewall causes. A prior failed connection or a background tab is not sufficient evidence of a current outage.
-- If a browser action reuses an existing blank tab, activate that tab explicitly so the user can see the result.
+- Prefer targeted reads: `browser_get_url`, `browser_find`, and bounded
+  `browser_get_text` before `browser_snapshot`.
+- Use `browser_snapshot` when structure, roles, or fresh actionable references
+  are needed. The snapshot uses the local VOM (structured observation) format
+  when available; treat returned refs as observation-scoped.
+- After navigation or a meaningful DOM change, observe again. Never reuse a ref
+  from an earlier observation, tab, identity, or runtime session.
+- Use `browser_screenshot` for visual evidence or visual-only content. Do not
+  infer Canvas controls from nearby text; if visual information matters, take
+  and inspect the screenshot.
+- If `browser_list_webmcp_tools` reports matching page tools, prefer
+  `browser_execute_webmcp_tool`. Re-list after navigation or execution.
 
-## Interaction workflow
+## Interaction rules
 
-1. Identify the exact `tabId`, URL, and visible target.
-2. Use `browser_find` or a scoped snapshot to obtain a selector/XPath.
-3. For a state-changing action, supply the explicit `tabId`.
-4. After navigation, upload, or a click, use `browser_wait_for`, `browser_get_text`, screenshot, or snapshot to verify the result.
-5. Treat `UNKNOWN_OUTCOME` as ambiguous: do not retry a write automatically.
+- Locate the target with a fresh ref, CSS selector, or XPath. Prefer refs from
+  the latest snapshot where the operation supports them.
+- After navigation, clicking, typing, selecting, pressing a key, or uploading,
+  verify the resulting state with `browser_wait_for`, `browser_get_text`, URL,
+  snapshot, or screenshot before reporting success.
+- `browser_evaluate` is a last-resort read-oriented diagnostic. Do not use page
+  JavaScript to bypass the Bridge's publish blocker or to simulate a protected
+  action.
+- `browser_set_files` requires absolute paths inside the content package root,
+  manifest membership, SHA-256 evidence, and the platform adapter limit. It is
+  an upload transaction, not a desktop file-picker operation.
+- A successful file dispatch is not proof that the site accepted the file;
+  observe the attachment or preview.
+
+## Effects, retries, and human steps
+
+The Bridge classifies operations by effect. Passive reads may be retried after
+a timeout. Any input, navigation, upload, WebMCP execution, or other write may
+have happened before a timeout or disconnect:
+
+- Treat `UNKNOWN_OUTCOME` / `unknown_outcome` as ambiguous.
+- Never retry an ambiguous write automatically.
+- Re-read the current page or connection state, then decide whether the user
+  must intervene. Do not turn an unknown result into success.
+
+For login, CAPTCHA, OTP, consent, payment confirmation, or other human-only
+steps, stop at the handoff and ask the user to complete the step. After the
+user confirms, observe again with fresh refs; do not repeat the action that may
+already have been dispatched.
+
+Final publish, payment, deletion, account-security, and other external commits
+remain protected by the Bridge. Do not bypass the protection with JavaScript,
+raw CDP, another browser backend, or a guessed selector.
 
 ## Multi-Agent coordination
 
@@ -48,29 +100,48 @@ Prefer targeted reads over complete page dumps:
 - Only one Agent may own the recorder at a time. Stop or hand off recording explicitly before another Agent starts it.
 - Use `browser_get_clients` and coordination status to diagnose ownership. Keep each MCP process's `KBB_CLIENT_ID` and `KBB_CLIENT_NAME` distinct.
 
-## Boundaries
+## Efficient tool routing
 
-- `browser_set_files` accepts absolute local paths and uses CDP file-input assignment; never use desktop file-picker coordinates.
-- `browser_evaluate` is for read-oriented page inspection and may be rejected by Chrome when it detects side effects.
-- Final publish/submit controls remain protected by the Bridge. Never attempt to bypass this through JavaScript.
-- Optional bookmarks, downloads, and extension inventory are read-only capabilities and may require user-granted extension permissions.
+| Need | Prefer |
+| --- | --- |
+| Connection and tabs | `browser_connection_status`, `browser_get_tabs`, `browser_get_url` |
+| Page structure and text | `browser_find`, bounded `browser_get_text`, `browser_snapshot` |
+| Visual evidence | `browser_screenshot` |
+| Page-defined actions | `browser_list_webmcp_tools`, then `browser_execute_webmcp_tool` |
+| Normal interaction | `browser_click`, `browser_type`, `browser_press`, `browser_select`, `browser_scroll` |
+| Files | `browser_set_files`, then observe the resulting attachment/preview |
+| Diagnostics | `browser_console_errors`, `browser_network_failures`, `browser_get_response_body`, `browser_inspect_element`, `browser_get_element_styles`, `browser_page_metrics` |
 
-## WebMCP routing
+Keep reads bounded with `maxChars`, `limit`, and deliberate snapshot depth.
+Response bodies and page content may contain sensitive data; request only the
+smallest range needed.
 
-When a page exposes WebMCP tools (`navigator.modelContextTesting`), prefer them for page-specific work:
+## Multi-agent coordination
 
-1. Call `browser_list_webmcp_tools` for the active `tabId`.
-2. If `available: true`, use `browser_execute_webmcp_tool` for matching page tools instead of DOM/CDP simulation.
-3. If `available: false`, or the needed capability has no matching WebMCP tool, continue with the normal `browser_find` / `browser_click` / `browser_type` flow. Never fall back to arbitrary `browser_evaluate` to bypass a missing tool.
-4. Re-list tools after executing one — the page may change its tool set after navigation or state changes.
-5. Treat `unknown_outcome` as ambiguous: never retry the tool call automatically. Re-list tools and re-decide.
-6. WebMCP tools are page-defined: the Bridge only forwards the fixed `listTools`/`executeTool` templates and never evaluates caller-supplied JavaScript.
+- Same-tab writes are serialized by the Bridge; concurrent reads are allowed.
+- On `RESOURCE_BUSY`, wait with bounded backoff or choose another tab. Never
+  spin in a tight retry loop.
+- On `RESOURCE_QUARANTINED`, re-read the tab state before retrying. An earlier
+  write may already have changed the page.
+- Only one Agent may own a recorder at a time. Stop or hand off recording
+  explicitly before another Agent starts it.
+- Keep each MCP process's client identity distinct when the coordination layer
+  exposes one.
 
-## Available tool groups
+## Privacy and evidence boundaries
 
-- Navigation: `browser_get_tabs`, `browser_new_tab`, `browser_switch_tab`, `browser_navigate`, `browser_scroll`, `browser_close_tab`.
-- Page inspection: `browser_find`, `browser_snapshot`, `browser_screenshot`, `browser_get_text`, `browser_get_url`, `browser_wait_for`.
-- Interaction: `browser_click`, `browser_type`, `browser_press`, `browser_select`, `browser_set_files`.
-- Browser inventory: `browser_list_bookmarks`, `browser_open_bookmark`, `browser_download_status`, `browser_list_extensions`.
-- WebMCP: `browser_list_webmcp_tools`, `browser_execute_webmcp_tool` (disabled with `KV_BROWSER_WEBMCP_DISABLED=1`).
-- Diagnostics: `browser_connection_status`, `browser_evaluate`.
+Never read, export, print, or place in a prompt, screenshot, log, or group title:
+cookies, tokens, passwords, OTPs, proxy credentials, Native Messaging bearer
+tokens, or Named Pipe endpoints. The Skill does not grant authorization for
+publishing or account actions.
+
+Report the evidence level precisely:
+
+- `EDITED`: files changed;
+- `LOCALLY_VERIFIED`: commands/tests/builds passed;
+- `SESSION_TOOL_VISIBLE`: MCP tools are visible to the current Agent;
+- `LIVE_VERIFIED`: a real Chrome read or action was observed and verified;
+- `NOT_VERIFIED`: remaining browser, account, network, upload, or publish paths.
+
+Do not call a build, static manifest, or Skill installation an end-to-end
+browser result. A live claim requires an actual Bridge call and observed state.

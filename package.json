@@ -61,6 +61,7 @@
     "status-computer-use-codex": "node apps/codex-mcp-server/dist/codex-install.js status",
     "smoke-computer-use": "powershell -ExecutionPolicy Bypass -File scripts/smoke-computer-use.ps1",
     "package-computer-use-rc": "npm run build:local-chrome && npm run publish:windows-uia && node scripts/package-computer-use-rc.mjs",
+    "install-skill": "node scripts/install-agent-skill.mjs",
     "install-host": "npm run build -w apps/host && node apps/host/dist/install.js install",
     "uninstall-host": "node apps/host/dist/install.js uninstall",
     "build:go-agent": "npm run build -w apps/go-agent",

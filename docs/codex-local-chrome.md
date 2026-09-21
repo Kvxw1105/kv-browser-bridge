@@ -19,7 +19,7 @@ An extension ID is required because the Native Messaging manifest allows only th
 Register the built Kv MCP server with Codex:
 
 ```powershell
-codex mcp add kv-browser-bridge -- node <absolute-path-to>\apps\codex-mcp-server\dist\server.js
+codex mcp add kv-browser-bridge -- node <absolute-path-to>\apps\codex-mcp-server\dist\guarded-server.js
 ```
 
 The MCP server uses stdio only. It discovers the Kv host via `%LOCALAPPDATA%\KvBrowserBridge\bridge.json` and connects using a per-process Windows Named Pipe plus a random bearer token. JSONL logs are stored under `%LOCALAPPDATA%\KvBrowserBridge\logs`.

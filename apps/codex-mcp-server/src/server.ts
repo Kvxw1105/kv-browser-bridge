@@ -4,6 +4,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod/v4';
+import { BROWSER_BRIDGE_CAPABILITIES } from '@kv-browser-bridge/browser-protocol';
 import { BridgeClient, BridgeError } from './bridge-client.js';
 import { registerGoTools } from './go.js';
 import { listIdentitySessions, resolveIdentityDiscovery } from './identity-registry.js';
@@ -47,6 +48,8 @@ const locator = {
 function json(result: unknown) {
   return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
 }
+
+server.tool('browser_capabilities', 'Return the non-sensitive Kv Browser Bridge runtime contract: transport, supported tool groups, first-use checks, and safety semantics. This does not probe Chrome and never returns identity, profile, proxy, or bearer-token data.', {}, async () => json(BROWSER_BRIDGE_CAPABILITIES));
 
 function bridgeErrorResult(error: unknown) {
   const bridgeError = error instanceof BridgeError

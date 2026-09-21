@@ -30,7 +30,7 @@ Reads may run concurrently. A write must include an explicit `tabId`; multi-step
 Codex can register the local stdio server directly:
 
 ```powershell
-codex mcp add kv-browser-bridge -- node C:\path\to\kv-browser-bridge\apps\codex-mcp-server\dist\server.js
+codex mcp add kv-browser-bridge -- node C:\path\to\kv-browser-bridge\apps\codex-mcp-server\dist\guarded-server.js
 ```
 
 Set the same identity variables in Codex's MCP environment when more than one Agent uses the Bridge.
@@ -39,7 +39,18 @@ Set the same identity variables in Codex's MCP environment when more than one Ag
 
 For any client that accepts standard stdio MCP server definitions (including Claude Code when configured for a local stdio server), use the generic configuration above. The only client-specific part is where that client stores its MCP configuration.
 
-Kv Browser Bridge does not require a cloud endpoint, browser automation daemon, or non-stdio transport.
+```json
+{
+  "mcpServers": {
+    "kv-browser-bridge": {
+      "command": "node",
+      "args": ["C:\\path\\to\\kv-browser-bridge\\apps\\codex-mcp-server\\dist\\guarded-server.js"]
+    }
+  }
+}
+```
+
+The exact configuration file name and placement are owned by the chosen client. Kv Browser Bridge does not require a cloud endpoint, browser automation daemon, or non-stdio transport.
 
 ## WorkBuddy
 

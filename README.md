@@ -71,7 +71,7 @@ Build before configuring a client. The MCP server is stdio-only; it connects to 
 Codex configuration example:
 
 ```powershell
-codex mcp add kv-browser-bridge -- node C:\path\to\kv-browser-bridge\apps\codex-mcp-server\dist\server.js
+codex mcp add kv-browser-bridge -- node C:\path\to\kv-browser-bridge\apps\codex-mcp-server\dist\guarded-server.js
 ```
 
 Generic MCP client or Claude Code configuration example:
@@ -81,7 +81,7 @@ Generic MCP client or Claude Code configuration example:
   "mcpServers": {
     "kv-browser-bridge": {
       "command": "node",
-      "args": ["C:\\path\\to\\kv-browser-bridge\\apps\\codex-mcp-server\\dist\\server.js"]
+      "args": ["C:\\path\\to\\kv-browser-bridge\\apps\\codex-mcp-server\\dist\\guarded-server.js"]
     }
   }
 }
@@ -89,24 +89,31 @@ Generic MCP client or Claude Code configuration example:
 
 See the [MCP client compatibility matrix](docs/compatibility.md) for the supported configuration scopes and WorkBuddy's conditional status.
 
-## Codex Skill
+## Agent Skill and setup
 
-The canonical Codex Skill is kept in this repository at
+The canonical, harness-neutral Skill is kept in this repository at
 [`skills/kv-browser-bridge/SKILL.md`](skills/kv-browser-bridge/SKILL.md). It tells
-Codex to prefer Kv Browser Bridge for the user's existing Chrome, use targeted
+Agents to prefer Kv Browser Bridge for the user's existing Chrome, use targeted
 page reads to control token usage, and preserve the bridge's connection and
 publish-protection boundaries. It contains no account, cookie, token, extension
 ID, or machine-specific path.
 
-After installing the bridge and registering its MCP server on another Windows
-machine, install the same canonical Skill with:
+For an Agent-driven setup, start with [`AGENT_INSTALL.md`](AGENT_INSTALL.md).
+The installer lists supported harness destinations and accepts an explicit
+Skill directory for another MCP-capable Agent:
 
 ```powershell
-.\scripts\install-codex-skill.ps1
+node scripts/install-agent-skill.mjs --list --json
+node scripts/install-agent-skill.mjs --harness codex --json
+node scripts/install-agent-skill.mjs --harness claude-code --json
+node scripts/install-agent-skill.mjs --destination <absolute-skill-directory> --json
 ```
 
 The installer will not replace a different existing local Skill unless the user
-explicitly passes `-Force` after reviewing that file.
+explicitly passes `--force` after reviewing that file. The PowerShell
+`install-codex-skill.ps1` remains as a compatibility wrapper. The runtime
+contract is available at [`skills/kv-browser-bridge/capabilities.json`](skills/kv-browser-bridge/capabilities.json)
+and through the read-only `browser_capabilities` MCP tool.
 
 ## Security boundaries
 

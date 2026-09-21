@@ -3,7 +3,6 @@
  * server. No process in this package owns stdin/stdout.
  */
 
-export const BRIDGE_PROTOCOL_VERSION = 1;
 export const NATIVE_MESSAGE_MAX_BYTES = 1024 * 1024;
 export const NATIVE_CHUNK_MAX_BYTES = 384 * 1024;
 export const PIPE_LINE_MAX_BYTES = 1024 * 1024;
@@ -410,3 +409,5 @@ export function asBridgeError(error: string | BridgeError | undefined): BridgeEr
 }
 
 export * from './webmcp.js';
+export * from './version.js';
+export * from './capabilities.js';
